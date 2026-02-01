@@ -34,35 +34,28 @@ FINEDATA_API_KEY=fd_xxx finedata-mcp
 ### Using npx
 
 ```bash
-npx @finedata/mcp-server
+npx -y @finedata/mcp-server
 ```
 
 ## Configuration
 
-### Claude Desktop
-
-Add to your `claude_desktop_config.json`:
-
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "finedata": {
-      "command": "uvx",
-      "args": ["finedata-mcp"],
-      "env": {
-        "FINEDATA_API_KEY": "fd_your_api_key_here"
-      }
-    }
-  }
-}
-```
-
 ### Cursor IDE
 
-Add to your MCP settings in Cursor:
+**Step 1:** Open Cursor Settings → MCP
+
+Or create/edit `~/.cursor/mcp.json`:
+
+**macOS/Linux:**
+```bash
+mkdir -p ~/.cursor && nano ~/.cursor/mcp.json
+```
+
+**Windows:**
+```
+%USERPROFILE%\.cursor\mcp.json
+```
+
+**Step 2:** Add FineData MCP server:
 
 ```json
 {
@@ -78,7 +71,12 @@ Add to your MCP settings in Cursor:
 }
 ```
 
-### Alternative: Using npx
+**Step 3:** Restart Cursor
+
+**Step 4:** Test by asking the agent:
+> "Scrape https://example.com and show me the title"
+
+#### Alternative: Using npx (if uv not installed)
 
 ```json
 {
@@ -93,6 +91,37 @@ Add to your MCP settings in Cursor:
   }
 }
 ```
+
+> **Note:** npx requires Python 3.10+ and uv/pipx installed. uvx is recommended.
+
+---
+
+### Claude Desktop
+
+**Step 1:** Open config file:
+
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+**Step 2:** Add MCP server:
+
+```json
+{
+  "mcpServers": {
+    "finedata": {
+      "command": "uvx",
+      "args": ["finedata-mcp"],
+      "env": {
+        "FINEDATA_API_KEY": "fd_your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+**Step 3:** Restart Claude Desktop
+
+---
 
 ## Environment Variables
 
@@ -208,6 +237,32 @@ FineData uses token-based pricing. Each feature adds tokens:
 | Yandex SmartCaptcha | +15 |
 
 Get your API key and free trial tokens at [finedata.ai](https://finedata.ai).
+
+## Troubleshooting
+
+### "No module named finedata_mcp"
+
+Install uv and use uvx:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### "externally-managed-environment" on macOS
+
+This happens with Homebrew Python. Use uvx instead of pip:
+```json
+{
+  "command": "uvx",
+  "args": ["finedata-mcp"]
+}
+```
+
+### MCP server not appearing in Cursor
+
+1. Check `~/.cursor/mcp.json` syntax (valid JSON)
+2. Ensure `FINEDATA_API_KEY` is set
+3. Restart Cursor completely
+4. Check Cursor Output → MCP for errors
 
 ## Support
 
