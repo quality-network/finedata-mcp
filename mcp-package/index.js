@@ -3,8 +3,11 @@
 /**
  * FineData MCP Server Launcher
  * 
- * This script launches the Python MCP server using uvx (uv tool).
- * uvx automatically handles Python environment and dependencies.
+ * This script launches the Python MCP server.
+ * It tries multiple methods in order:
+ * 1. uvx (recommended, from uv)
+ * 2. pipx run (alternative)
+ * 3. python -m with auto-install
  * 
  * Usage:
  *   npx @finedata/mcp-server
@@ -14,8 +17,7 @@
  *   FINEDATA_API_URL - API URL (default: https://api.finedata.ai)
  */
 
-const { spawn } = require('child_process');
-const path = require('path');
+const { spawn, spawnSync } = require('child_process');
 
 // Check if API key is set
 if (!process.env.FINEDATA_API_KEY) {
@@ -24,66 +26,119 @@ if (!process.env.FINEDATA_API_KEY) {
   process.exit(1);
 }
 
-// Try uvx first (recommended), fallback to python -m
-function tryUvx() {
-  const uvx = spawn('uvx', ['finedata-mcp'], {
+// Check if a command exists
+function commandExists(cmd) {
+  const result = spawnSync('which', [cmd], { stdio: 'pipe' });
+  return result.status === 0;
+}
+
+// Check if Python module is installed
+function moduleInstalled(pythonCmd, moduleName) {
+  const result = spawnSync(pythonCmd, ['-c', `import ${moduleName}`], { 
+    stdio: 'pipe',
+    env: process.env 
+  });
+  return result.status === 0;
+}
+
+// Install Python package
+function installPackage(pythonCmd) {
+  console.error('Installing finedata-mcp...');
+  const result = spawnSync(pythonCmd, ['-m', 'pip', 'install', '--user', '-q', 'finedata-mcp'], {
+    stdio: 'inherit',
+    env: process.env
+  });
+  return result.status === 0;
+}
+
+// Method 1: Try uvx (recommended)
+function tryUvx(onFail) {
+  if (!commandExists('uvx')) {
+    return onFail();
+  }
+
+  const proc = spawn('uvx', ['finedata-mcp'], {
     stdio: 'inherit',
     env: process.env,
   });
 
-  uvx.on('error', (err) => {
-    if (err.code === 'ENOENT') {
-      // uvx not found, try python
-      tryPython();
+  proc.on('error', () => onFail());
+  proc.on('exit', (code) => {
+    if (code !== 0 && code !== null) {
+      // uvx failed, try next method
+      onFail();
     } else {
-      console.error('Error starting server:', err.message);
-      process.exit(1);
+      process.exit(code || 0);
     }
-  });
-
-  uvx.on('exit', (code) => {
-    process.exit(code || 0);
   });
 }
 
+// Method 2: Try pipx run
+function tryPipx(onFail) {
+  if (!commandExists('pipx')) {
+    return onFail();
+  }
+
+  const proc = spawn('pipx', ['run', 'finedata-mcp'], {
+    stdio: 'inherit',
+    env: process.env,
+  });
+
+  proc.on('error', () => onFail());
+  proc.on('exit', (code) => {
+    if (code !== 0 && code !== null) {
+      onFail();
+    } else {
+      process.exit(code || 0);
+    }
+  });
+}
+
+// Method 3: Try python with auto-install
 function tryPython() {
-  // Try python3 first, then python
   const pythonCommands = ['python3', 'python'];
   
-  function tryNextPython(index) {
-    if (index >= pythonCommands.length) {
-      console.error('Error: Python not found. Please install Python 3.10+ or uv.');
-      console.error('Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh');
-      process.exit(1);
+  for (const pythonCmd of pythonCommands) {
+    if (!commandExists(pythonCmd)) continue;
+
+    // Check if module is installed, if not - install it
+    if (!moduleInstalled(pythonCmd, 'mcp_server')) {
+      const installed = installPackage(pythonCmd);
+      if (!installed) {
+        console.error(`Failed to install finedata-mcp with ${pythonCmd}`);
+        continue;
+      }
     }
 
-    const cmd = pythonCommands[index];
-    const python = spawn(cmd, ['-m', 'finedata_mcp'], {
+    // Run the server
+    const proc = spawn(pythonCmd, ['-m', 'mcp_server'], {
       stdio: 'inherit',
       env: process.env,
     });
 
-    python.on('error', (err) => {
-      if (err.code === 'ENOENT') {
-        tryNextPython(index + 1);
-      } else {
-        console.error('Error starting server:', err.message);
-        process.exit(1);
-      }
+    proc.on('error', (err) => {
+      console.error('Error starting server:', err.message);
+      process.exit(1);
     });
 
-    python.on('exit', (code) => {
-      if (code === null) {
-        // Process was killed, try next
-        tryNextPython(index + 1);
-      } else {
-        process.exit(code);
-      }
+    proc.on('exit', (code) => {
+      process.exit(code || 0);
     });
+
+    return; // Started successfully
   }
 
-  tryNextPython(0);
+  // No Python found
+  console.error('Error: Python 3.10+ is required but not found.');
+  console.error('');
+  console.error('Options:');
+  console.error('  1. Install uv (recommended): curl -LsSf https://astral.sh/uv/install.sh | sh');
+  console.error('  2. Install Python: https://www.python.org/downloads/');
+  console.error('');
+  console.error('Or use uvx directly in your MCP config:');
+  console.error('  "command": "uvx", "args": ["finedata-mcp"]');
+  process.exit(1);
 }
 
-// Start with uvx
-tryUvx();
+// Start: try methods in order
+tryUvx(() => tryPipx(() => tryPython()));
