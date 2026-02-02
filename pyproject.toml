@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "finedata-mcp"
-version = "0.1.4"
+version = "0.1.5"
 description = "MCP Server for FineData web scraping API - enables AI agents to scrape any website"
 readme = "README.md"
 license = "MIT"
@@ -55,11 +55,11 @@ Changelog = "https://github.com/quality-network/finedata-mcp/releases"
 finedata-mcp = "mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["mcp_server"]
+packages = ["src/mcp_server"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "mcp_server/**/*.py",
+    "src/mcp_server/**/*.py",
     "README.md",
     "LICENSE",
 ]
