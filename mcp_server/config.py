@@ -4,7 +4,7 @@ Configuration for FineData MCP Server.
 Environment variables:
 - FINEDATA_API_KEY: API key for authentication (required)
 - FINEDATA_API_URL: Base URL for FineData API (default: https://api.finedata.ai)
-- FINEDATA_TIMEOUT: Default timeout in seconds (default: 60)
+- FINEDATA_TIMEOUT: Default timeout in seconds (default: 180)
 """
 
 import os
@@ -33,7 +33,7 @@ class Config:
         return cls(
             api_key=api_key,
             api_url=os.environ.get("FINEDATA_API_URL", "https://api.finedata.ai"),
-            timeout=int(os.environ.get("FINEDATA_TIMEOUT", "60")),
+            timeout=int(os.environ.get("FINEDATA_TIMEOUT", "180")),
         )
 
 

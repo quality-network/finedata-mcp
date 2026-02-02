@@ -54,7 +54,12 @@ Token costs:
                 },
                 "use_undetected": {
                     "type": "boolean",
-                    "description": "Use Undetected Chrome for maximum antibot bypass (Cloudflare, PerimeterX). Default: false",
+                    "description": "Use Undetected Chrome for antibot bypass. Default: false",
+                    "default": False,
+                },
+                "use_nodriver": {
+                    "type": "boolean",
+                    "description": "Use Nodriver (better than UC) - no WebDriver markers, direct CDP. Best for maximum stealth. Default: false",
                     "default": False,
                 },
                 "solve_captcha": {
@@ -64,8 +69,8 @@ Token costs:
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in seconds (5-300). Default: 60",
-                    "default": 60,
+                    "description": "Timeout in seconds (5-300). Default: 180",
+                    "default": 180,
                     "minimum": 5,
                     "maximum": 300,
                 },
@@ -77,6 +82,11 @@ Token costs:
                 "session_id": {
                     "type": "string",
                     "description": "Sticky session ID - all requests with same ID use same proxy IP. Good for auth flows.",
+                },
+                "tls_profile": {
+                    "type": "string",
+                    "description": "TLS fingerprint profile. Options: 'chrome120', 'chrome124', 'firefox121', 'safari17', 'vip' (premium auto-rotation), 'vip:ios', 'vip:android', 'vip:windows', 'vip:mobile'. Default: chrome124",
+                    "default": "chrome124",
                 },
             },
             "required": ["url"],
@@ -219,10 +229,12 @@ async def handle_scrape_url(arguments: dict[str, Any]) -> list[TextContent]:
         use_js_render=arguments.get("use_js_render", False),
         use_residential=arguments.get("use_residential", False),
         use_undetected=arguments.get("use_undetected", False),
+        use_nodriver=arguments.get("use_nodriver", False),
         solve_captcha=arguments.get("solve_captcha", False),
-        timeout=arguments.get("timeout", 60),
+        timeout=arguments.get("timeout", 180),
         js_wait_for=arguments.get("js_wait_for", "networkidle"),
         session_id=arguments.get("session_id"),
+        tls_profile=arguments.get("tls_profile", "chrome124"),
     )
     
     client = get_client()
@@ -266,8 +278,9 @@ async def handle_scrape_async(arguments: dict[str, Any]) -> list[TextContent]:
         use_js_render=arguments.get("use_js_render", False),
         use_residential=arguments.get("use_residential", False),
         use_undetected=arguments.get("use_undetected", False),
+        use_nodriver=arguments.get("use_nodriver", False),
         solve_captcha=arguments.get("solve_captcha", False),
-        timeout=arguments.get("timeout", 120),
+        timeout=arguments.get("timeout", 180),
     )
     
     client = get_client()
