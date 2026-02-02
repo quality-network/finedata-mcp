@@ -24,7 +24,7 @@ class ScrapeOptions:
     body: Optional[str] = None
     tls_profile: str = "chrome124"
     max_retries: int = 5
-    timeout: int = 60
+    timeout: int = 180
     
     # Feature flags (token multipliers)
     use_antibot: bool = True
@@ -32,6 +32,7 @@ class ScrapeOptions:
     use_residential: bool = False
     use_mobile: bool = False
     use_undetected: bool = False
+    use_nodriver: bool = False
     
     # JS rendering options
     js_wait_for: str = "networkidle"
@@ -58,6 +59,7 @@ class ScrapeOptions:
             "use_residential": self.use_residential,
             "use_mobile": self.use_mobile,
             "use_undetected": self.use_undetected,
+            "use_nodriver": self.use_nodriver,
             "js_wait_for": self.js_wait_for,
             "js_scroll": self.js_scroll,
             "solve_captcha": self.solve_captcha,
