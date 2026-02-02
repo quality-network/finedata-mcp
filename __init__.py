@@ -6,7 +6,7 @@ Allows AI agents (Claude, Cursor, GPT) to scrape websites with antibot bypass,
 JS rendering, captcha solving, and proxy rotation.
 """
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __author__ = "FineData"
 
 from .server import main
