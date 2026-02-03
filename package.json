@@ -1,0 +1,44 @@
+{
+  "name": "@finedata/mcp-server",
+  "version": "0.1.6",
+  "description": "MCP Server for FineData web scraping API - enables AI agents to scrape any website with antibot bypass",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "finedata",
+    "web-scraping",
+    "ai-agents",
+    "claude",
+    "cursor",
+    "antibot",
+    "captcha-solving"
+  ],
+  "author": "FineData <support@finedata.ai>",
+  "license": "MIT",
+  "homepage": "https://finedata.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quality-network/finedata-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/quality-network/finedata-mcp/issues"
+  },
+  "bin": {
+    "finedata-mcp": "./index.js"
+  },
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {},
+  "publishConfig": {
+    "access": "public"
+  }
+}
