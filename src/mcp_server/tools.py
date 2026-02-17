@@ -31,9 +31,13 @@ Use cases:
 
 Token costs:
 - Base request: 1 token
-- Antibot bypass: +2 tokens
+- TLS fingerprinting: +2 tokens
 - JS rendering: +5 tokens  
+- Stealth Antibot: +7 tokens
+- Stealth Antibot Headful: +25 tokens (maximum protection bypass)
+- Stealth New (experimental): +15 tokens
 - Residential proxy: +3 tokens
+- Mobile proxy: +4 tokens
 - Captcha solving: +10 tokens""",
         inputSchema={
             "type": "object",
@@ -52,14 +56,24 @@ Token costs:
                     "description": "Use residential proxy instead of datacenter. Better for protected sites. Default: false",
                     "default": False,
                 },
-                "use_undetected": {
+                "use_mobile": {
                     "type": "boolean",
-                    "description": "Use Undetected Chrome for antibot bypass. Default: false",
+                    "description": "Use mobile proxy (Russian carriers: MTS, Megafon, Beeline). Best for Russian sites. Default: false",
                     "default": False,
                 },
-                "use_nodriver": {
+                "stealth_antibot": {
                     "type": "boolean",
-                    "description": "Use Nodriver (better than UC) - no WebDriver markers, direct CDP. Best for maximum stealth. Default: false",
+                    "description": "Enable Stealth Antibot mode for advanced protection bypass. Good for Cloudflare, DataDome. Default: false",
+                    "default": False,
+                },
+                "stealth_antibot_headful": {
+                    "type": "boolean",
+                    "description": "Enable Stealth Antibot Headful mode - maximum protection bypass with real browser rendering. Best for Arkose Labs, complex challenges. 25 tokens. Default: false",
+                    "default": False,
+                },
+                "stealth_new": {
+                    "type": "boolean",
+                    "description": "Enable experimental Stealth New engine - latest bypass technology. 15 tokens. Default: false",
                     "default": False,
                 },
                 "solve_captcha": {
@@ -87,6 +101,27 @@ Token costs:
                     "type": "string",
                     "description": "TLS fingerprint profile. Options: 'chrome120', 'chrome124', 'firefox121', 'safari17', 'vip' (premium auto-rotation), 'vip:ios', 'vip:android', 'vip:windows', 'vip:mobile'. Default: chrome124",
                     "default": "chrome124",
+                },
+                "formats": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["markdown", "rawHtml", "text", "links"]},
+                    "default": ["markdown"],
+                    "description": "Output formats. Default: ['markdown'] (optimized for AI). Options: markdown, rawHtml, text, links",
+                },
+                "only_main_content": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Extract only main content (removes nav, footer, ads). Default: true",
+                },
+                "extract_prompt": {
+                    "type": "string",
+                    "description": "Natural language instruction for AI-powered data extraction. Example: 'Extract all product names and prices'",
+                },
+                "ai_content_mode": {
+                    "type": "string",
+                    "enum": ["full", "main"],
+                    "default": "full",
+                    "description": "Content mode for AI extraction. 'full' = all page data (best for product/listing pages). 'main' = article content only via Readability (fewer tokens). Default: 'full'",
                 },
             },
             "required": ["url"],
@@ -120,9 +155,14 @@ Returns a job_id that you can poll with get_job_status.""",
                     "description": "Use residential proxy",
                     "default": False,
                 },
-                "use_undetected": {
+                "stealth_antibot": {
                     "type": "boolean",
-                    "description": "Use Undetected Chrome",
+                    "description": "Enable Stealth Antibot mode",
+                    "default": False,
+                },
+                "stealth_antibot_headful": {
+                    "type": "boolean",
+                    "description": "Enable Stealth Antibot Headful mode (25 tokens)",
                     "default": False,
                 },
                 "solve_captcha": {
@@ -225,16 +265,26 @@ async def handle_scrape_url(arguments: dict[str, Any]) -> list[TextContent]:
     if not url:
         return [TextContent(type="text", text="Error: url is required")]
     
+    # Map public names to internal names
+    # Public: stealth_antibot → Internal: use_undetected
+    # Public: stealth_antibot_headful → Internal: use_nodriver
+    # Public: stealth_new → Internal: use_patchright
     options = ScrapeOptions(
         use_js_render=arguments.get("use_js_render", False),
         use_residential=arguments.get("use_residential", False),
-        use_undetected=arguments.get("use_undetected", False),
-        use_nodriver=arguments.get("use_nodriver", False),
+        use_mobile=arguments.get("use_mobile", False),
+        use_undetected=arguments.get("stealth_antibot", False),
+        use_nodriver=arguments.get("stealth_antibot_headful", False),
+        use_patchright=arguments.get("stealth_new", False),
         solve_captcha=arguments.get("solve_captcha", False),
         timeout=arguments.get("timeout", 180),
         js_wait_for=arguments.get("js_wait_for", "networkidle"),
         session_id=arguments.get("session_id"),
         tls_profile=arguments.get("tls_profile", "chrome124"),
+        formats=arguments.get("formats", ["markdown"]),
+        only_main_content=arguments.get("only_main_content", True),
+        extract_prompt=arguments.get("extract_prompt"),
+        ai_content_mode=arguments.get("ai_content_mode", "full"),
     )
     
     client = get_client()
@@ -263,7 +313,25 @@ async def handle_scrape_url(arguments: dict[str, Any]) -> list[TextContent]:
     
     response_parts.append("")
     response_parts.append("--- Content ---")
-    response_parts.append(result.body)
+    
+    # Prefer markdown (LLM-friendly) over raw HTML
+    data = getattr(result, 'data', None) or {}
+    if isinstance(data, dict):
+        if data.get('markdown'):
+            response_parts.append(data['markdown'])
+        elif data.get('text'):
+            response_parts.append(data['text'])
+        else:
+            response_parts.append(result.body)
+    else:
+        response_parts.append(result.body)
+    
+    # Add extracted data if present
+    if isinstance(data, dict) and data.get('extract'):
+        import json
+        response_parts.append("")
+        response_parts.append("--- Extracted Data ---")
+        response_parts.append(json.dumps(data['extract'], indent=2, ensure_ascii=False))
     
     return [TextContent(type="text", text="\n".join(response_parts))]
 
@@ -274,11 +342,14 @@ async def handle_scrape_async(arguments: dict[str, Any]) -> list[TextContent]:
     if not url:
         return [TextContent(type="text", text="Error: url is required")]
     
+    # Map public names to internal names
     options = ScrapeOptions(
         use_js_render=arguments.get("use_js_render", False),
         use_residential=arguments.get("use_residential", False),
-        use_undetected=arguments.get("use_undetected", False),
-        use_nodriver=arguments.get("use_nodriver", False),
+        use_mobile=arguments.get("use_mobile", False),
+        use_undetected=arguments.get("stealth_antibot", False),
+        use_nodriver=arguments.get("stealth_antibot_headful", False),
+        use_patchright=arguments.get("stealth_new", False),
         solve_captcha=arguments.get("solve_captcha", False),
         timeout=arguments.get("timeout", 180),
     )
@@ -346,6 +417,7 @@ async def handle_batch_scrape(arguments: dict[str, Any]) -> list[TextContent]:
     options = ScrapeOptions(
         use_js_render=arguments.get("use_js_render", False),
         use_residential=arguments.get("use_residential", False),
+        use_mobile=arguments.get("use_mobile", False),
     )
     
     client = get_client()

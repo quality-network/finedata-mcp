@@ -31,8 +31,9 @@ class ScrapeOptions:
     use_js_render: bool = False
     use_residential: bool = False
     use_mobile: bool = False
-    use_undetected: bool = False
-    use_nodriver: bool = False
+    use_undetected: bool = False  # Internal: stealth_antibot
+    use_nodriver: bool = False    # Internal: stealth_antibot_headful
+    use_patchright: bool = False  # Internal: stealth_new
     
     # JS rendering options
     js_wait_for: str = "networkidle"
@@ -44,6 +45,14 @@ class ScrapeOptions:
     # Session management
     session_id: Optional[str] = None
     session_ttl: int = 1800
+    
+    # Output formats
+    formats: Optional[list[str]] = None
+    only_main_content: bool = False
+    
+    # Extraction
+    extract_prompt: Optional[str] = None
+    ai_content_mode: str = "full"
     
     def to_dict(self) -> dict[str, Any]:
         """Convert to API request dict."""
@@ -60,11 +69,16 @@ class ScrapeOptions:
             "use_mobile": self.use_mobile,
             "use_undetected": self.use_undetected,
             "use_nodriver": self.use_nodriver,
+            "use_patchright": self.use_patchright,
             "js_wait_for": self.js_wait_for,
             "js_scroll": self.js_scroll,
             "solve_captcha": self.solve_captcha,
             "session_id": self.session_id,
             "session_ttl": self.session_ttl,
+            "formats": self.formats,
+            "only_main_content": self.only_main_content,
+            "extract_prompt": self.extract_prompt,
+            "ai_content_mode": self.ai_content_mode,
         }
 
 
@@ -76,8 +90,9 @@ class ScrapeResult:
     status_code: int
     headers: dict[str, Any]
     body: str
-    meta: dict[str, Any]
-    tokens_used: int
+    data: Optional[dict[str, Any]] = None
+    meta: dict[str, Any] = field(default_factory=dict)
+    tokens_used: int = 0
     captcha_detected: bool = False
     captcha_type: Optional[str] = None
     captcha_solved: bool = False
@@ -183,6 +198,7 @@ class FineDataClient:
                 status_code=data.get("status_code", response.status_code),
                 headers=data.get("headers", {}),
                 body=data.get("body", ""),
+                data=data.get("data"),
                 meta=data.get("meta", {}),
                 tokens_used=data.get("tokens_used", 0),
                 captcha_detected=data.get("captcha_detected", False),

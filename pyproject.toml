@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "finedata-mcp"
-version = "0.1.6"
+version = "0.1.8"
 description = "MCP Server for FineData web scraping API - enables AI agents to scrape any website"
 readme = "README.md"
 license = "MIT"
@@ -46,7 +46,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://finedata.ai"
-Documentation = "https://docs.finedata.ai"
+Documentation = "https://finedata.ai/docs"
 Repository = "https://github.com/quality-network/finedata-mcp"
 Issues = "https://github.com/quality-network/finedata-mcp/issues"
 Changelog = "https://github.com/quality-network/finedata-mcp/releases"

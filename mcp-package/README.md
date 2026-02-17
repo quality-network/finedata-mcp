@@ -150,7 +150,7 @@ Sign up at [finedata.ai](https://finedata.ai) to get your API key and free trial
 
 ## Documentation
 
-Full documentation: https://docs.finedata.ai
+Full documentation: https://finedata.ai/docs
 
 ## Issues
 

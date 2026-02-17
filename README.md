@@ -9,6 +9,8 @@ Enables AI agents like Claude, Cursor, and GPT to scrape any website with:
 - **Captcha Solving** - reCAPTCHA, hCaptcha, Cloudflare Turnstile, Yandex
 - **Proxy Rotation** - 87K+ datacenter, residential, and mobile proxies
 - **Smart Retry** - Automatic retries with block detection
+- **Markdown Output** - Returns clean Markdown by default (optimized for AI agents)
+- **AI Extraction** - Extract structured data using natural language prompts (Qwen3-32B)
 
 ## Installation
 
@@ -140,18 +142,28 @@ Scrape content from any web page with antibot bypass.
 ```
 scrape_url(
   url: "https://example.com",
-  use_js_render: false,      # Enable Playwright for SPAs
-  use_residential: false,    # Use residential proxy
-  use_undetected: false,     # Use Undetected Chrome
-  solve_captcha: false,      # Auto-solve captchas
-  timeout: 60                # Timeout in seconds
+  formats: ["markdown"],            # Output: markdown, rawHtml, text, links (default: ["markdown"])
+  only_main_content: true,          # Extract main content only (default: true)
+  extract_prompt: null,             # AI extraction instruction (e.g. "Extract all product prices")
+  use_js_render: false,             # Enable Playwright for SPAs
+  stealth_antibot: false,           # Stealth mode for Cloudflare, DataDome (+7 tokens)
+  stealth_antibot_headful: false,   # Maximum bypass with real browser (+25 tokens)
+  stealth_new: false,               # Experimental engine (+15 tokens)
+  use_residential: false,           # Use residential proxy
+  solve_captcha: false,             # Auto-solve captchas
+  timeout: 60                       # Timeout in seconds
 )
 ```
+
+> **Note:** The MCP server returns Markdown by default (not raw HTML), which is optimized for AI agent consumption.
 
 **Token costs:**
 - Base request: 1 token
 - Antibot bypass: +2 tokens
 - JS rendering: +5 tokens
+- Stealth Antibot: +7 tokens
+- Stealth Headful: +25 tokens
+- Stealth New: +15 tokens
 - Residential proxy: +3 tokens
 - Captcha solving: +10 tokens
 
@@ -216,6 +228,10 @@ Ask Claude or your AI agent:
 
 > "Scrape https://protected-site.com using residential proxy and captcha solving"
 
+### AI Data Extraction
+
+> "Scrape https://shop.com/products and extract all product names and prices"
+
 ### Batch Scraping
 
 > "Scrape these URLs: https://example.com/1, https://example.com/2, https://example.com/3"
@@ -229,12 +245,15 @@ FineData uses token-based pricing. Each feature adds tokens:
 | Base request | 1 |
 | Antibot (TLS fingerprinting) | +2 |
 | JS Rendering (Playwright) | +5 |
-| Undetected Chrome | +5 |
+| Stealth Antibot | +7 |
+| Stealth Headful | +25 |
+| Stealth New | +15 |
 | Residential Proxy | +3 |
 | Mobile Proxy | +4 |
 | reCAPTCHA / hCaptcha | +10 |
 | Cloudflare Turnstile | +12 |
 | Yandex SmartCaptcha | +15 |
+| AI Extraction (Qwen3-32B) | +5 |
 
 Get your API key and free trial tokens at [finedata.ai](https://finedata.ai).
 
@@ -266,7 +285,7 @@ This happens with Homebrew Python. Use uvx instead of pip:
 
 ## Support
 
-- Documentation: https://docs.finedata.ai
+- Documentation: https://finedata.ai/docs
 - Email: support@finedata.ai
 - Issues: https://github.com/quality-network/finedata-mcp/issues
 
