@@ -1,0 +1,60 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "io.github.quality-network/finedata-mcp",
+  "description": "FineData web scraping MCP — antibot bypass, JS render, markdown for AI agents",
+  "version": "0.2.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "finedata-mcp",
+      "version": "0.2.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FINEDATA_API_KEY",
+          "description": "FineData API key (fd_…)",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "FINEDATA_API_URL",
+          "description": "API base URL",
+          "isRequired": false,
+          "default": "https://api.finedata.ai"
+        }
+      ]
+    },
+    {
+      "registryType": "npm",
+      "identifier": "@finedata/mcp-server",
+      "version": "0.2.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FINEDATA_API_KEY",
+          "description": "FineData API key (fd_…)",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.finedata.ai/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer fd_… API key or OAuth access token",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

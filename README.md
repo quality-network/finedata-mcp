@@ -2,62 +2,58 @@
 
 MCP (Model Context Protocol) server for [FineData](https://finedata.ai) web scraping API.
 
-Enables AI agents like Claude, Cursor, and GPT to scrape any website with:
+Enables AI agents (Claude, Cursor, GPT, …) to scrape websites with:
 
-- **Antibot Bypass** - Cloudflare, DataDome, PerimeterX, and more
-- **JavaScript Rendering** - Full browser rendering with Playwright
-- **Captcha Solving** - reCAPTCHA, hCaptcha, Cloudflare Turnstile, Yandex
-- **Proxy Rotation** - 87K+ datacenter, residential, and mobile proxies
-- **Smart Retry** - Automatic retries with block detection
-- **Markdown Output** - Returns clean Markdown by default (optimized for AI agents)
-- **AI Extraction** - Extract structured data using natural language prompts (Qwen3-32B)
+- Antibot bypass (Cloudflare, DataDome, PerimeterX, Akamai, …)
+- JavaScript rendering and browser actions
+- Captcha solving
+- Datacenter / ISP / residential / mobile proxies
+- Markdown output by default (LLM-optimized)
+- AI structured extraction
+- Local **stdio** or remote **Streamable HTTP** (+ OAuth 2.1)
+
+Version: **0.2.1**
+
+## Escalation ladder (recommended)
+
+Prefer the cheapest step that works. **Do not start with residential.**
+
+1. base (~3 tok with default TLS antibot)
+2. `stealth_antibot` + datacenter (~10)
+3. `stealth_premium` + `use_isp` (~25) — default for protected sites (60% on hard targets vs 13% on datacenter)
+4. `stealth_premium_headful` + `use_isp` (~34) — hardest challenges
+5. `use_residential` / `use_mobile` — geo and IP-sensitive sites only
+6. residential / mobile — geo / IP-sensitive only
+
+Gateway may apply a domain strategy that overrides engine/proxy; trust `tokens_used` in the response.
+
+See `docs/mcp-escalation-ladder-2026-07-29.md`.
 
 ## Installation
 
-### Using uvx (Recommended)
+### uvx (recommended)
 
 ```bash
-# Install uv if you haven't already
 curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Run directly with uvx
 FINEDATA_API_KEY=fd_xxx uvx finedata-mcp
 ```
 
-### Using pip
+### pip
 
 ```bash
 pip install finedata-mcp
-
-# Run
 FINEDATA_API_KEY=fd_xxx finedata-mcp
 ```
 
-### Using npx
+### npx
 
 ```bash
 npx -y @finedata/mcp-server
 ```
 
-## Configuration
+## Cursor
 
-### Cursor IDE
-
-**Step 1:** Open Cursor Settings → MCP
-
-Or create/edit `~/.cursor/mcp.json`:
-
-**macOS/Linux:**
-```bash
-mkdir -p ~/.cursor && nano ~/.cursor/mcp.json
-```
-
-**Windows:**
-```
-%USERPROFILE%\.cursor\mcp.json
-```
-
-**Step 2:** Add FineData MCP server:
+`~/.cursor/mcp.json` (Windows: `%USERPROFILE%\.cursor\mcp.json`):
 
 ```json
 {
@@ -73,220 +69,66 @@ mkdir -p ~/.cursor && nano ~/.cursor/mcp.json
 }
 ```
 
-**Step 3:** Restart Cursor
+Cursor deeplink (after publishing): install via MCP directory / “Add to Cursor”.
 
-**Step 4:** Test by asking the agent:
-> "Scrape https://example.com and show me the title"
-
-#### Alternative: Using npx (if uv not installed)
+### Remote (Streamable HTTP)
 
 ```json
 {
   "mcpServers": {
     "finedata": {
-      "command": "npx",
-      "args": ["-y", "@finedata/mcp-server"],
-      "env": {
-        "FINEDATA_API_KEY": "fd_your_api_key_here"
+      "url": "https://mcp.finedata.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer fd_your_api_key_here"
       }
     }
   }
 }
 ```
 
-> **Note:** npx requires Python 3.10+ and uv/pipx installed. uvx is recommended.
+OAuth 2.1 (Claude.ai / ChatGPT connectors): register via AS at `https://api.finedata.ai`, consent in the cabinet, then use the access token as Bearer.
 
----
+## Environment
 
-### Claude Desktop
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `FINEDATA_API_KEY` | stdio: yes | — | API key |
+| `FINEDATA_API_URL` | no | `https://api.finedata.ai` | API base |
+| `FINEDATA_TIMEOUT` | no | `180` | HTTP client timeout (seconds) |
+| `FINEDATA_MCP_HOST` | HTTP | `0.0.0.0` | Bind host |
+| `FINEDATA_MCP_PORT` | HTTP | `8080` | Bind port |
+| `FINEDATA_OAUTH_ISSUER` | remote OAuth | — | AS URL (gateway) |
+| `FINEDATA_MCP_RESOURCE_URL` | remote OAuth | — | Public MCP URL |
+| `FINEDATA_JWT_SECRET` | remote OAuth | — | Verify `aud=mcp` JWTs |
 
-**Step 1:** Open config file:
+## Tools
 
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+| Tool | Purpose |
+|------|---------|
+| `scrape_url` | Sync scrape (markdown default) |
+| `scrape_async` | Async job (`formats=['markdown']` default) |
+| `get_job_status` | Poll job (markdown, not raw HTML) |
+| `cancel_job` | Cancel job |
+| `list_jobs` | List jobs |
+| `batch_scrape` | Up to 100 URLs (string or `{url,...}` objects) |
+| `get_batch_status` | Batch progress |
+| `get_usage` | Period usage via `api_tokens_used` |
 
-**Step 2:** Add MCP server:
+Notable parameters: `use_antibot`, `proxy_country`, `proxy_sticky`, `proxy_profile_id`, `auto_retry`, stealth modes, `formats`, `only_main_content`, extract_*.
 
-```json
-{
-  "mcpServers": {
-    "finedata": {
-      "command": "uvx",
-      "args": ["finedata-mcp"],
-      "env": {
-        "FINEDATA_API_KEY": "fd_your_api_key_here"
-      }
-    }
-  }
-}
-```
+Async/batch: no `csv`/`xlsx` formats (sync only).
 
-**Step 3:** Restart Claude Desktop
+## HTTP transport
 
----
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `FINEDATA_API_KEY` | Yes | Your FineData API key |
-| `FINEDATA_API_URL` | No | API URL (default: https://api.finedata.ai) |
-| `FINEDATA_TIMEOUT` | No | Default timeout in seconds (default: 60) |
-
-## Available Tools
-
-### scrape_url
-
-Scrape content from any web page with antibot bypass.
-
-```
-scrape_url(
-  url: "https://example.com",
-  formats: ["markdown"],            # Output: markdown, rawHtml, text, links (default: ["markdown"])
-  only_main_content: true,          # Extract main content only (default: true)
-  extract_prompt: null,             # AI extraction instruction (e.g. "Extract all product prices")
-  use_js_render: false,             # Enable Playwright for SPAs
-  stealth_antibot: false,           # Stealth mode for Cloudflare, DataDome (+7 tokens)
-  stealth_antibot_headful: false,   # Maximum bypass with real browser (+25 tokens)
-  stealth_new: false,               # Experimental engine (+15 tokens)
-  use_residential: false,           # Use residential proxy
-  solve_captcha: false,             # Auto-solve captchas
-  timeout: 60                       # Timeout in seconds
-)
-```
-
-> **Note:** The MCP server returns Markdown by default (not raw HTML), which is optimized for AI agent consumption.
-
-**Token costs:**
-- Base request: 1 token
-- Antibot bypass: +2 tokens
-- JS rendering: +5 tokens
-- Stealth Antibot: +7 tokens
-- Stealth Headful: +25 tokens
-- Stealth New: +15 tokens
-- Residential proxy: +3 tokens
-- Captcha solving: +10 tokens
-
-### scrape_async
-
-Submit an async scraping job for long-running requests.
-
-```
-scrape_async(
-  url: "https://heavy-site.com",
-  use_js_render: true,
-  timeout: 120,
-  callback_url: "https://your-webhook.com/callback"
-)
-```
-
-Returns a `job_id` for status polling.
-
-### get_job_status
-
-Get the status of an async scraping job.
-
-```
-get_job_status(job_id: "550e8400-e29b-41d4-a716-446655440000")
-```
-
-Statuses: `pending`, `processing`, `completed`, `failed`, `cancelled`
-
-### batch_scrape
-
-Scrape multiple URLs in a single batch (up to 100 URLs).
-
-```
-batch_scrape(
-  urls: ["https://example.com/1", "https://example.com/2"],
-  use_js_render: false,
-  callback_url: "https://your-webhook.com/batch-done"
-)
-```
-
-### get_usage
-
-Get current API token usage.
-
-```
-get_usage()
-```
-
-## Examples
-
-### Basic Scraping
-
-Ask Claude or your AI agent:
-
-> "Scrape https://example.com and show me the content"
-
-### JavaScript Rendered Page
-
-> "Scrape https://spa-website.com with JavaScript rendering enabled"
-
-### Protected Site with Captcha
-
-> "Scrape https://protected-site.com using residential proxy and captcha solving"
-
-### AI Data Extraction
-
-> "Scrape https://shop.com/products and extract all product names and prices"
-
-### Batch Scraping
-
-> "Scrape these URLs: https://example.com/1, https://example.com/2, https://example.com/3"
-
-## Pricing
-
-FineData uses token-based pricing. Each feature adds tokens:
-
-| Feature | Tokens |
-|---------|--------|
-| Base request | 1 |
-| Antibot (TLS fingerprinting) | +2 |
-| JS Rendering (Playwright) | +5 |
-| Stealth Antibot | +7 |
-| Stealth Headful | +25 |
-| Stealth New | +15 |
-| Residential Proxy | +3 |
-| Mobile Proxy | +4 |
-| reCAPTCHA / hCaptcha | +10 |
-| Cloudflare Turnstile | +12 |
-| Yandex SmartCaptcha | +15 |
-| AI Extraction (Qwen3-32B) | +5 |
-
-Get your API key and free trial tokens at [finedata.ai](https://finedata.ai).
-
-## Troubleshooting
-
-### "No module named finedata_mcp"
-
-Install uv and use uvx:
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+finedata-mcp --transport http --host 0.0.0.0 --port 8080
 ```
 
-### "externally-managed-environment" on macOS
-
-This happens with Homebrew Python. Use uvx instead of pip:
-```json
-{
-  "command": "uvx",
-  "args": ["finedata-mcp"]
-}
-```
-
-### MCP server not appearing in Cursor
-
-1. Check `~/.cursor/mcp.json` syntax (valid JSON)
-2. Ensure `FINEDATA_API_KEY` is set
-3. Restart Cursor completely
-4. Check Cursor Output → MCP for errors
+Health: `GET /health`. Protected resource metadata: `GET /.well-known/oauth-protected-resource`.
 
 ## Support
 
-- Documentation: https://finedata.ai/docs
-- Email: support@finedata.ai
+- Docs: https://finedata.ai/docs
 - Issues: https://github.com/quality-network/finedata-mcp/issues
 
 ## License

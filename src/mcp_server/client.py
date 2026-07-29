@@ -1,91 +1,114 @@
-"""
-HTTP Client for FineData API.
+"""HTTP client for FineData public API."""
 
-Provides async methods for all FineData scraping endpoints.
-"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 import httpx
-import logging
-from typing import Any, Optional
-from dataclasses import dataclass, field
 
+from . import __version__
 from .config import get_config
 
 logger = logging.getLogger(__name__)
 
+CONTENT_TRUNCATE_CHARS = 60_000
+
+
+class FineDataAPIError(Exception):
+    """API error with HTTP status and parsed body for agents."""
+
+    def __init__(self, status_code: int, message: str, body: Any = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+        self.body = body
+
+    def __str__(self) -> str:
+        return f"HTTP {self.status_code}: {self.message}"
+
 
 @dataclass
 class ScrapeOptions:
-    """Options for scraping requests."""
-    
-    # Basic options
     method: str = "GET"
     headers: dict[str, str] = field(default_factory=dict)
     body: Optional[str] = None
-    tls_profile: str = "chrome124"
+    tls_profile: str = "chrome136"
     max_retries: int = 5
-    timeout: int = 180
-    
-    # Feature flags (token multipliers)
+    timeout: int = 120
+    auto_retry: bool = True
+
     use_antibot: bool = True
     use_js_render: bool = False
+    use_isp: bool = False
     use_residential: bool = False
     use_mobile: bool = False
-    use_undetected: bool = False  # Internal: stealth_antibot
-    use_nodriver: bool = False    # Internal: stealth_antibot_headful
-    use_patchright: bool = False  # Internal: stealth_new
-    
-    # JS rendering options
+    proxy_sticky: bool = False
+    proxy_country: Optional[str] = None
+    proxy_profile_id: Optional[int] = None
+
+    use_undetected: bool = False  # stealth_antibot
+    use_nodriver: bool = False  # stealth_antibot_headful
+    use_patchright: bool = False  # stealth_new
+    use_botbrowser: bool = False  # stealth_premium
+    use_botbrowser_headful: bool = False  # stealth_premium_headful
+
     js_wait_for: str = "networkidle"
     js_scroll: bool = False
-    
-    # Captcha solving
+    js_actions: Optional[list[dict[str, Any]]] = None
     solve_captcha: bool = False
-    
-    # Session management
     session_id: Optional[str] = None
     session_ttl: int = 1800
-    
-    # Output formats
+
     formats: Optional[list[str]] = None
     only_main_content: bool = False
-    
-    # Extraction
+
+    extract_rules: Optional[dict[str, Any]] = None
+    extract_schema: Optional[dict[str, Any]] = None
     extract_prompt: Optional[str] = None
     ai_content_mode: str = "full"
-    
+
     def to_dict(self) -> dict[str, Any]:
-        """Convert to API request dict."""
-        return {
+        payload: dict[str, Any] = {
             "method": self.method,
             "headers": self.headers,
             "body": self.body,
             "tls_profile": self.tls_profile,
             "max_retries": self.max_retries,
             "timeout": self.timeout,
+            "auto_retry": self.auto_retry,
             "use_antibot": self.use_antibot,
             "use_js_render": self.use_js_render,
+            "use_isp": self.use_isp,
             "use_residential": self.use_residential,
             "use_mobile": self.use_mobile,
-            "use_undetected": self.use_undetected,
-            "use_nodriver": self.use_nodriver,
-            "use_patchright": self.use_patchright,
+            "proxy_sticky": self.proxy_sticky,
+            "proxy_country": self.proxy_country,
+            "proxy_profile_id": self.proxy_profile_id,
+            "stealth_antibot": self.use_undetected,
+            "stealth_antibot_headful": self.use_nodriver,
+            "stealth_new": self.use_patchright,
+            "stealth_premium": self.use_botbrowser,
+            "stealth_premium_headful": self.use_botbrowser_headful,
             "js_wait_for": self.js_wait_for,
             "js_scroll": self.js_scroll,
+            "js_actions": self.js_actions,
             "solve_captcha": self.solve_captcha,
             "session_id": self.session_id,
             "session_ttl": self.session_ttl,
             "formats": self.formats,
             "only_main_content": self.only_main_content,
+            "extract_rules": self.extract_rules,
+            "extract_schema": self.extract_schema,
             "extract_prompt": self.extract_prompt,
             "ai_content_mode": self.ai_content_mode,
         }
+        return {k: v for k, v in payload.items() if v is not None}
 
 
 @dataclass
 class ScrapeResult:
-    """Result from a scrape request."""
-    
     success: bool
     status_code: int
     headers: dict[str, Any]
@@ -101,8 +124,6 @@ class ScrapeResult:
 
 @dataclass
 class AsyncJob:
-    """Async job response."""
-    
     job_id: str
     status: str
     url: str
@@ -110,124 +131,129 @@ class AsyncJob:
     estimated_completion: Optional[str] = None
     result: Optional[ScrapeResult] = None
     error: Optional[str] = None
+    tokens_used: int = 0
+    raw: Optional[dict[str, Any]] = None
+
+
+def _error_message_from_body(status_code: int, body: Any) -> str:
+    if isinstance(body, dict):
+        detail = body.get("detail") or body.get("error") or body.get("message")
+        if isinstance(detail, list):
+            # FastAPI validation errors
+            parts = []
+            for item in detail[:5]:
+                if isinstance(item, dict):
+                    loc = ".".join(str(x) for x in item.get("loc", [])[-2:])
+                    parts.append(f"{loc}: {item.get('msg')}")
+                else:
+                    parts.append(str(item))
+            detail = "; ".join(parts)
+        if detail:
+            return str(detail)
+    if isinstance(body, str) and body.strip():
+        return body[:500]
+    return f"Request failed with status {status_code}"
 
 
 class FineDataClient:
-    """Async HTTP client for FineData API."""
-    
-    def __init__(self):
-        config = get_config()
-        self.api_url = config.api_url.rstrip("/")
-        self.api_key = config.api_key
+    def __init__(self, api_key: Optional[str] = None, api_url: Optional[str] = None):
+        config = get_config(require_api_key=False)
+        self.api_url = (api_url or config.api_url).rstrip("/")
+        self.api_key = api_key if api_key is not None else config.api_key
         self.timeout = config.timeout
         self._client: Optional[httpx.AsyncClient] = None
-    
+
+    def with_api_key(self, api_key: str) -> "FineDataClient":
+        return FineDataClient(api_key=api_key, api_url=self.api_url)
+
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client."""
         if self._client is None or self._client.is_closed:
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": f"finedata-mcp/{__version__}",
+            }
+            if self.api_key:
+                if self.api_key.startswith("fd_"):
+                    headers["x-api-key"] = self.api_key
+                    headers["Authorization"] = f"Bearer {self.api_key}"
+                else:
+                    headers["Authorization"] = f"Bearer {self.api_key}"
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.timeout + 30),
-                headers={
-                    "x-api-key": self.api_key,
-                    "Content-Type": "application/json",
-                    "User-Agent": "finedata-mcp/0.1.0",
-                },
+                headers=headers,
             )
         return self._client
-    
-    async def close(self):
-        """Close the HTTP client."""
+
+    async def close(self) -> None:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
-    
-    async def scrape(
-        self,
-        url: str,
-        options: Optional[ScrapeOptions] = None,
-    ) -> ScrapeResult:
-        """
-        Scrape a URL synchronously.
-        
-        Args:
-            url: Target URL to scrape
-            options: Scraping options (use defaults if not provided)
-            
-        Returns:
-            ScrapeResult with page content and metadata
-        """
+
+    async def _raise_for_status(self, response: httpx.Response) -> None:
+        if response.status_code < 400:
+            return
+        body: Any
+        try:
+            body = response.json()
+        except Exception:
+            body = response.text
+        msg = _error_message_from_body(response.status_code, body)
+        if response.status_code == 401:
+            msg = "Invalid or expired credentials. Check FINEDATA_API_KEY / OAuth token."
+        elif response.status_code == 402:
+            msg = "Payment required. Add tokens or upgrade your plan at https://finedata.ai"
+        elif response.status_code == 429:
+            msg = f"Rate limited. {msg}"
+        raise FineDataAPIError(response.status_code, msg, body)
+
+    def _parse_scrape_result(self, data: dict[str, Any], http_status: int) -> ScrapeResult:
+        return ScrapeResult(
+            success=data.get("success", False),
+            status_code=data.get("status_code", http_status),
+            headers=data.get("headers", {}) or {},
+            body=data.get("body", "") or "",
+            data=data.get("data"),
+            meta=data.get("meta", {}) or {},
+            tokens_used=int(data.get("tokens_used") or 0),
+            captcha_detected=bool(data.get("captcha_detected", False)),
+            captcha_type=data.get("captcha_type"),
+            captcha_solved=bool(data.get("captcha_solved", False)),
+            error=data.get("error") or data.get("detail"),
+        )
+
+    async def scrape(self, url: str, options: Optional[ScrapeOptions] = None) -> ScrapeResult:
         if options is None:
             options = ScrapeOptions()
-        
         client = await self._get_client()
-        
         payload = {"url": url, **options.to_dict()}
-        
         try:
-            response = await client.post(
-                f"{self.api_url}/api/v1/scrape",
-                json=payload,
-            )
-            
-            if response.status_code == 401:
-                return ScrapeResult(
-                    success=False,
-                    status_code=401,
-                    headers={},
-                    body="",
-                    meta={},
-                    tokens_used=0,
-                    error="Invalid API key. Check your FINEDATA_API_KEY.",
-                )
-            
-            if response.status_code == 402:
-                return ScrapeResult(
-                    success=False,
-                    status_code=402,
-                    headers={},
-                    body="",
-                    meta={},
-                    tokens_used=0,
-                    error="Payment required. Please add tokens or upgrade your plan.",
-                )
-            
+            response = await client.post(f"{self.api_url}/api/v1/scrape", json=payload)
+            if response.status_code in (401, 402, 422, 429):
+                await self._raise_for_status(response)
+            if response.status_code >= 400:
+                await self._raise_for_status(response)
             data = response.json()
-            
-            return ScrapeResult(
-                success=data.get("success", False),
-                status_code=data.get("status_code", response.status_code),
-                headers=data.get("headers", {}),
-                body=data.get("body", ""),
-                data=data.get("data"),
-                meta=data.get("meta", {}),
-                tokens_used=data.get("tokens_used", 0),
-                captcha_detected=data.get("captcha_detected", False),
-                captcha_type=data.get("captcha_type"),
-                captcha_solved=data.get("captcha_solved", False),
-            )
-            
+            return self._parse_scrape_result(data, response.status_code)
+        except FineDataAPIError:
+            raise
         except httpx.TimeoutException:
             return ScrapeResult(
                 success=False,
                 status_code=504,
                 headers={},
                 body="",
-                meta={},
-                tokens_used=0,
                 error=f"Request timed out after {self.timeout} seconds",
             )
         except Exception as e:
-            logger.error(f"Scrape request failed: {e}")
+            logger.error("Scrape request failed: %s", e)
             return ScrapeResult(
                 success=False,
                 status_code=500,
                 headers={},
                 body="",
-                meta={},
-                tokens_used=0,
                 error=str(e),
             )
-    
+
     async def scrape_async(
         self,
         url: str,
@@ -235,165 +261,106 @@ class FineDataClient:
         callback_url: Optional[str] = None,
         callback_headers: Optional[dict[str, str]] = None,
     ) -> AsyncJob:
-        """
-        Submit an async scrape job.
-        
-        Args:
-            url: Target URL to scrape
-            options: Scraping options
-            callback_url: Webhook URL for result notification
-            callback_headers: Custom headers for webhook
-            
-        Returns:
-            AsyncJob with job_id for status polling
-        """
         if options is None:
-            options = ScrapeOptions()
-        
+            options = ScrapeOptions(formats=["markdown"])
         client = await self._get_client()
-        
         payload = {
             "url": url,
             **options.to_dict(),
             "callback_url": callback_url,
             "callback_headers": callback_headers,
         }
-        
-        try:
-            response = await client.post(
-                f"{self.api_url}/api/v1/async/scrape",
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            return AsyncJob(
-                job_id=data["job_id"],
-                status=data["status"],
-                url=data["url"],
-                created_at=data["created_at"],
-                estimated_completion=data.get("estimated_completion"),
-            )
-            
-        except Exception as e:
-            logger.error(f"Async scrape request failed: {e}")
-            raise
-    
+        response = await client.post(f"{self.api_url}/api/v1/async/scrape", json=payload)
+        await self._raise_for_status(response)
+        data = response.json()
+        return AsyncJob(
+            job_id=data["job_id"],
+            status=data["status"],
+            url=data["url"],
+            created_at=data["created_at"],
+            estimated_completion=data.get("estimated_completion"),
+            raw=data,
+        )
+
     async def get_job_status(self, job_id: str) -> AsyncJob:
-        """
-        Get status of an async job.
-        
-        Args:
-            job_id: Job ID from scrape_async
-            
-        Returns:
-            AsyncJob with current status and result if completed
-        """
         client = await self._get_client()
-        
-        try:
-            response = await client.get(
-                f"{self.api_url}/api/v1/async/jobs/{job_id}",
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            result = None
-            if data.get("result"):
-                r = data["result"]
-                result = ScrapeResult(
-                    success=r.get("success", False),
-                    status_code=r.get("status_code", 0),
-                    headers=r.get("headers", {}),
-                    body=r.get("body", ""),
-                    meta=r.get("meta", {}),
-                    tokens_used=data.get("tokens_used", 0),
-                )
-            
-            return AsyncJob(
-                job_id=data["job_id"],
-                status=data["status"],
-                url=data["url"],
-                created_at=data["created_at"],
-                result=result,
-                error=data.get("error"),
-            )
-            
-        except Exception as e:
-            logger.error(f"Get job status failed: {e}")
-            raise
-    
+        response = await client.get(f"{self.api_url}/api/v1/async/jobs/{job_id}")
+        await self._raise_for_status(response)
+        data = response.json()
+        result = None
+        if data.get("result"):
+            r = data["result"]
+            result = self._parse_scrape_result(r, r.get("status_code", 0))
+            if not result.tokens_used:
+                result.tokens_used = int(data.get("tokens_used") or 0)
+        return AsyncJob(
+            job_id=data["job_id"],
+            status=data["status"],
+            url=data["url"],
+            created_at=data["created_at"],
+            result=result,
+            error=data.get("error"),
+            tokens_used=int(data.get("tokens_used") or 0),
+            raw=data,
+        )
+
+    async def cancel_job(self, job_id: str) -> dict[str, Any]:
+        client = await self._get_client()
+        response = await client.delete(f"{self.api_url}/api/v1/async/jobs/{job_id}")
+        await self._raise_for_status(response)
+        if response.content:
+            try:
+                return response.json()
+            except Exception:
+                pass
+        return {"job_id": job_id, "status": "cancelled"}
+
+    async def list_jobs(self, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+        client = await self._get_client()
+        response = await client.get(
+            f"{self.api_url}/api/v1/async/jobs",
+            params={"limit": limit, "offset": offset},
+        )
+        await self._raise_for_status(response)
+        return response.json()
+
     async def batch_scrape(
         self,
-        urls: list[str],
-        options: Optional[ScrapeOptions] = None,
+        requests: list[dict[str, Any]],
         callback_url: Optional[str] = None,
     ) -> dict[str, Any]:
-        """
-        Submit a batch scrape job for multiple URLs.
-        
-        Args:
-            urls: List of URLs to scrape (max 100)
-            options: Scraping options (applied to all URLs)
-            callback_url: Webhook URL for batch completion
-            
-        Returns:
-            Batch job info with batch_id and job_ids
-        """
-        if options is None:
-            options = ScrapeOptions()
-        
-        if len(urls) > 100:
+        if len(requests) > 100:
             raise ValueError("Maximum 100 URLs per batch")
-        
         client = await self._get_client()
-        
-        # Build requests list
-        requests = [{"url": url, **options.to_dict()} for url in urls]
-        
-        payload = {
-            "requests": requests,
-            "callback_url": callback_url,
-        }
-        
-        try:
-            response = await client.post(
-                f"{self.api_url}/api/v1/async/batch",
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
-            
-        except Exception as e:
-            logger.error(f"Batch scrape request failed: {e}")
-            raise
-    
+        payload: dict[str, Any] = {"requests": requests}
+        if callback_url:
+            payload["callback_url"] = callback_url
+        response = await client.post(f"{self.api_url}/api/v1/async/batch", json=payload)
+        await self._raise_for_status(response)
+        return response.json()
+
+    async def get_batch_status(self, batch_id: str) -> dict[str, Any]:
+        client = await self._get_client()
+        response = await client.get(f"{self.api_url}/api/v1/async/batch/{batch_id}")
+        await self._raise_for_status(response)
+        return response.json()
+
     async def get_usage(self) -> dict[str, Any]:
-        """
-        Get current token usage for the API key.
-        
-        Returns:
-            Usage statistics including tokens used and limits
-        """
         client = await self._get_client()
-        
-        try:
-            response = await client.get(f"{self.api_url}/api/v1/usage")
-            response.raise_for_status()
-            return response.json()
-            
-        except Exception as e:
-            logger.error(f"Get usage failed: {e}")
-            raise
+        response = await client.get(f"{self.api_url}/api/v1/usage")
+        await self._raise_for_status(response)
+        return response.json()
 
 
-# Global client instance (lazy loaded)
 _client: Optional[FineDataClient] = None
 
 
-def get_client() -> FineDataClient:
-    """Get or create the global client."""
+def get_client(api_key: Optional[str] = None) -> FineDataClient:
+    """Return a client. If api_key is set, return a fresh keyed client."""
     global _client
+    if api_key:
+        base = _client or FineDataClient()
+        return base.with_api_key(api_key)
     if _client is None:
         _client = FineDataClient()
     return _client

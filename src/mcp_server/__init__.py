@@ -1,12 +1,6 @@
-"""
-FineData MCP Server
+"""FineData MCP Server package."""
 
-MCP (Model Context Protocol) server for FineData web scraping API.
-Allows AI agents (Claude, Cursor, GPT) to scrape websites with antibot bypass,
-JS rendering, captcha solving, and proxy rotation.
-"""
-
-__version__ = "0.1.8"
+__version__ = "0.2.1"
 __author__ = "FineData"
 
 from .server import main
