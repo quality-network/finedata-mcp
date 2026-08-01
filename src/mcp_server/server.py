@@ -6,14 +6,14 @@ import argparse
 import json
 import logging
 import sys
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ImageContent, TextContent, ToolAnnotations
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, Field
 
 from . import __version__
 from .client import FineDataAPIError, FineDataClient, ScrapeOptions, get_client
@@ -168,7 +168,12 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
     @mcp.tool(
         title="Scrape URL",
         description=(
-            "Scrape a web page with antibot bypass. Returns markdown by default.\n\n"
+            "Scrape one complete HTTP(S) URL with antibot bypass. Returns markdown by "
+            "default.\n\n"
+            'REQUIRED INPUT: call this tool with {"url":"https://..."}; put search '
+            "terms in that URL's encoded query string. This is a URL fetcher, not a "
+            'search tool: it does not accept an argument named "query" or a bare '
+            "natural-language search phrase.\n\n"
             + SERVER_INSTRUCTIONS
             + "\n\nToken costs (estimates, use_antibot default +2 included): "
             "base ~3; stealth_antibot +7; stealth_premium +20 (~23 total with DC); "
@@ -185,7 +190,19 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
         ),
     )
     async def scrape_url(
-        url: str,
+        url: Annotated[
+            str,
+            Field(
+                description=(
+                    "REQUIRED absolute HTTP(S) URL to fetch, including any encoded "
+                    "search parameters. Example: "
+                    "https://huggingface.co/api/models?search=Uncensored%20AWQ&limit=30. "
+                    'Use the argument name "url", never "query".'
+                ),
+                pattern=r"^https?://",
+                examples=["https://example.com/"],
+            ),
+        ],
         method: str = "GET",
         headers: Optional[dict[str, str]] = None,
         body: Optional[str] = None,

@@ -12,7 +12,7 @@ Enables AI agents (Claude, Cursor, GPT, …) to scrape websites with:
 - AI structured extraction
 - Local **stdio** or remote **Streamable HTTP** (+ OAuth 2.1)
 
-Version: **0.2.1**
+Version: **0.2.2**
 
 ## Escalation ladder (recommended)
 

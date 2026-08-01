@@ -1,6 +1,6 @@
 {
   "name": "@finedata/mcp-server",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "MCP Server for FineData web scraping API - enables AI agents to scrape any website with antibot bypass",
   "keywords": [
     "mcp",
@@ -24,7 +24,7 @@
     "url": "https://github.com/quality-network/finedata-mcp/issues"
   },
   "bin": {
-    "finedata-mcp": "./index.js"
+    "finedata-mcp": "index.js"
   },
   "main": "index.js",
   "files": [
