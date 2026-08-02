@@ -196,7 +196,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
                 description=(
                     "REQUIRED absolute HTTP(S) URL to fetch, including any encoded "
                     "search parameters. Example: "
-                    "https://huggingface.co/api/models?search=Uncensored%20AWQ&limit=30. "
+                    "https://api.example.com/items?search=wireless%20headphones&limit=30. "
                     'Use the argument name "url", never "query".'
                 ),
                 pattern=r"^https?://",
