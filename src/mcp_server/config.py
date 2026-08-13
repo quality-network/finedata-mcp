@@ -6,7 +6,10 @@ Environment variables:
 - FINEDATA_TIMEOUT: Default client timeout seconds (default: 180)
 - FINEDATA_MCP_HOST / FINEDATA_MCP_PORT: HTTP bind (default 0.0.0.0:8080)
 - FINEDATA_OAUTH_ISSUER: Authorization server URL (gateway) for remote MCP
-- FINEDATA_MCP_RESOURCE_URL: Public MCP resource URL (e.g. https://mcp.finedata.ai)
+- FINEDATA_MCP_RESOURCE_URL: Public MCP endpoint URL, path included
+  (https://mcp.finedata.ai/mcp). It is published verbatim as `resource` in the
+  protected-resource document and decides where that document is served, so the
+  origin alone makes the server advertise an identifier that is not itself.
 - FINEDATA_JWT_SECRET: Shared secret to verify OAuth access tokens (aud=mcp)
 """
 

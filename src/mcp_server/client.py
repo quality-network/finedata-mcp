@@ -162,9 +162,28 @@ class FineDataClient:
         self.api_key = api_key if api_key is not None else config.api_key
         self.timeout = config.timeout
         self._client: Optional[httpx.AsyncClient] = None
+        # Per-call hop headers. Never written onto the shared httpx client:
+        # two users on a cached FineDataClient must not see each other's IP.
+        self._call_headers: dict[str, str] = {}
 
     def with_api_key(self, api_key: str) -> "FineDataClient":
         return FineDataClient(api_key=api_key, api_url=self.api_url)
+
+    def with_call_headers(self, headers: dict[str, str]) -> "FineDataClient":
+        """Return a client that sends ``headers`` on each HTTP call.
+
+        Empty headers reuse this instance (nothing to leak). Non-empty headers
+        always clone: the cached client from ``get_client`` must stay clean.
+        """
+        cleaned = {k: v for k, v in headers.items() if v}
+        if not cleaned:
+            return self
+        clone = FineDataClient(api_key=self.api_key, api_url=self.api_url)
+        clone._call_headers = cleaned
+        return clone
+
+    def _request_headers(self) -> dict[str, str] | None:
+        return self._call_headers or None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -227,7 +246,11 @@ class FineDataClient:
         client = await self._get_client()
         payload = {"url": url, **options.to_dict()}
         try:
-            response = await client.post(f"{self.api_url}/api/v1/scrape", json=payload)
+            response = await client.post(
+                f"{self.api_url}/api/v1/scrape",
+                json=payload,
+                headers=self._request_headers(),
+            )
             if response.status_code in (401, 402, 422, 429):
                 await self._raise_for_status(response)
             if response.status_code >= 400:
@@ -270,7 +293,11 @@ class FineDataClient:
             "callback_url": callback_url,
             "callback_headers": callback_headers,
         }
-        response = await client.post(f"{self.api_url}/api/v1/async/scrape", json=payload)
+        response = await client.post(
+            f"{self.api_url}/api/v1/async/scrape",
+            json=payload,
+            headers=self._request_headers(),
+        )
         await self._raise_for_status(response)
         data = response.json()
         return AsyncJob(
@@ -284,7 +311,10 @@ class FineDataClient:
 
     async def get_job_status(self, job_id: str) -> AsyncJob:
         client = await self._get_client()
-        response = await client.get(f"{self.api_url}/api/v1/async/jobs/{job_id}")
+        response = await client.get(
+            f"{self.api_url}/api/v1/async/jobs/{job_id}",
+            headers=self._request_headers(),
+        )
         await self._raise_for_status(response)
         data = response.json()
         result = None
@@ -306,7 +336,10 @@ class FineDataClient:
 
     async def cancel_job(self, job_id: str) -> dict[str, Any]:
         client = await self._get_client()
-        response = await client.delete(f"{self.api_url}/api/v1/async/jobs/{job_id}")
+        response = await client.delete(
+            f"{self.api_url}/api/v1/async/jobs/{job_id}",
+            headers=self._request_headers(),
+        )
         await self._raise_for_status(response)
         if response.content:
             try:
@@ -320,6 +353,7 @@ class FineDataClient:
         response = await client.get(
             f"{self.api_url}/api/v1/async/jobs",
             params={"limit": limit, "offset": offset},
+            headers=self._request_headers(),
         )
         await self._raise_for_status(response)
         return response.json()
@@ -335,19 +369,29 @@ class FineDataClient:
         payload: dict[str, Any] = {"requests": requests}
         if callback_url:
             payload["callback_url"] = callback_url
-        response = await client.post(f"{self.api_url}/api/v1/async/batch", json=payload)
+        response = await client.post(
+            f"{self.api_url}/api/v1/async/batch",
+            json=payload,
+            headers=self._request_headers(),
+        )
         await self._raise_for_status(response)
         return response.json()
 
     async def get_batch_status(self, batch_id: str) -> dict[str, Any]:
         client = await self._get_client()
-        response = await client.get(f"{self.api_url}/api/v1/async/batch/{batch_id}")
+        response = await client.get(
+            f"{self.api_url}/api/v1/async/batch/{batch_id}",
+            headers=self._request_headers(),
+        )
         await self._raise_for_status(response)
         return response.json()
 
     async def get_usage(self) -> dict[str, Any]:
         client = await self._get_client()
-        response = await client.get(f"{self.api_url}/api/v1/usage")
+        response = await client.get(
+            f"{self.api_url}/api/v1/usage",
+            headers=self._request_headers(),
+        )
         await self._raise_for_status(response)
         return response.json()
 

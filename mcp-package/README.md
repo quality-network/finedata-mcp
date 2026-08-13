@@ -33,6 +33,6 @@ Prefer the Python package with `--transport http`, or point Cursor at:
 
 ## Docs
 
-Full tool list and escalation ladder: https://pypi.org/project/finedata-mcp/
+Full tool list: https://pypi.org/project/finedata-mcp/
 
-Version **0.2.3**
+Version **0.3.0**

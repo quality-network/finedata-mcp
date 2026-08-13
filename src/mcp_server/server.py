@@ -17,6 +17,7 @@ from pydantic import AnyHttpUrl, Field
 
 from . import __version__
 from .client import FineDataAPIError, FineDataClient, ScrapeOptions, get_client
+from .client_ip import hop_headers_from_context
 from .config import get_config
 from .escalation import SERVER_INSTRUCTIONS
 from .formatting import (
@@ -32,17 +33,59 @@ logger = logging.getLogger("finedata-mcp")
 SYNC_FORMATS = ["markdown", "rawHtml", "text", "links", "screenshot", "csv", "xlsx"]
 ASYNC_FORMATS = ["markdown", "rawHtml", "text", "links", "screenshot"]
 
+# Methods that may change something at the other end. They live in their own tool
+# because a tool annotation describes the whole tool: `scrape_url` with
+# `method="DELETE"` was annotated as one operation while being able to perform two
+# very different ones, and a client deciding whether to ask the user first had no
+# way to tell them apart.
+UNSAFE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+
 
 class _PassThroughTokenVerifier:
-    """Accept API keys (fd_*) and OAuth JWTs (aud=mcp).
+    """Accept API keys (fd_*) and OAuth JWTs issued for this resource.
 
     Verification of fd_* is deferred to the FineData API on first tool call.
     JWTs are verified locally when FINEDATA_JWT_SECRET is configured.
+
+    Two audiences are accepted, and only two: this endpoint's own URL, which is
+    what RFC 8707 mints, and the bare `"mcp"` that predates it. The gateway now
+    puts both in every token, so this is the other half of that rollout — once no
+    token carries `"mcp"` any more, drop it here and in `oauth_router._mint_access_token`.
     """
 
-    def __init__(self, jwt_secret: str | None, jwt_algorithm: str = "HS256"):
+    LEGACY_AUDIENCE = "mcp"
+
+    def __init__(
+        self,
+        jwt_secret: str | None,
+        jwt_algorithm: str = "HS256",
+        resource_url: str | None = None,
+    ):
         self.jwt_secret = jwt_secret
         self.jwt_algorithm = jwt_algorithm
+        self.resource_url = (resource_url or "").rstrip("/") or None
+
+    def _accepted_audiences(self) -> list[str]:
+        if self.resource_url:
+            return [self.resource_url, self.LEGACY_AUDIENCE]
+        return [self.LEGACY_AUDIENCE]
+
+    def _token_resource(self, aud: Any) -> str:
+        """Which resource the token names, now that `aud` may be a list.
+
+        Reading a list as a string used to yield `"mcp"` for a token that in fact
+        named this endpoint, so the value reported upward said the opposite of the
+        claim it came from.
+        """
+        if isinstance(aud, str):
+            return aud
+        if isinstance(aud, list):
+            if self.resource_url and self.resource_url in aud:
+                return self.resource_url
+            for value in aud:
+                if isinstance(value, str):
+                    return value
+        return self.LEGACY_AUDIENCE
 
     async def verify_token(self, token: str) -> AccessToken | None:
         if not token:
@@ -57,13 +100,25 @@ class _PassThroughTokenVerifier:
             try:
                 from jose import jwt
 
-                payload = jwt.decode(
-                    token,
-                    self.jwt_secret,
-                    algorithms=[self.jwt_algorithm],
-                    audience="mcp",
-                    options={"verify_aud": True},
-                )
+                # python-jose takes one expected audience per call, so each accepted
+                # value is tried in turn. A token for anything else fails all of them
+                # and is refused — the point of checking the audience at all.
+                payload = None
+                last_error: Exception | None = None
+                for audience in self._accepted_audiences():
+                    try:
+                        payload = jwt.decode(
+                            token,
+                            self.jwt_secret,
+                            algorithms=[self.jwt_algorithm],
+                            audience=audience,
+                            options={"verify_aud": True},
+                        )
+                        break
+                    except Exception as e:  # signature, expiry or wrong audience
+                        last_error = e
+                if payload is None:
+                    raise last_error or ValueError("token rejected")
                 scopes = payload.get("scope", "")
                 if isinstance(scopes, str):
                     scope_list = [s for s in scopes.split() if s]
@@ -76,7 +131,7 @@ class _PassThroughTokenVerifier:
                     client_id=str(payload.get("client_id") or payload.get("sub") or "oauth"),
                     scopes=scope_list or ["scrape:write", "jobs:read", "usage:read"],
                     expires_at=payload.get("exp"),
-                    resource=payload.get("aud") if isinstance(payload.get("aud"), str) else "mcp",
+                    resource=self._token_resource(payload.get("aud")),
                 )
             except Exception as e:
                 logger.warning("OAuth token verification failed: %s", e)
@@ -104,8 +159,123 @@ def _resolve_api_key(explicit: Optional[str] = None) -> str:
     )
 
 
-def _client() -> FineDataClient:
-    return get_client(_resolve_api_key())
+def _client(ctx: Context | None = None) -> FineDataClient:
+    """Keyed API client for this tool call.
+
+    The keyed client from ``get_client`` must not store the caller IP: that
+    value is per-request. Hop headers are applied on a clone via
+    ``with_call_headers`` and sent on each HTTP call, not on the shared
+    httpx client.
+    """
+    return get_client(_resolve_api_key()).with_call_headers(hop_headers_from_context(ctx))
+
+
+def _scrape_args(
+    *,
+    method: str = "GET",
+    headers: Optional[dict[str, str]] = None,
+    body: Optional[str] = None,
+    timeout: int = 120,
+    max_retries: int = 5,
+    auto_retry: bool = True,
+    use_antibot: bool = True,
+    tls_profile: str = "chrome136",
+    use_isp: bool = False,
+    use_residential: bool = False,
+    use_mobile: bool = False,
+    proxy_sticky: bool = False,
+    proxy_country: Optional[str] = None,
+    proxy_profile_id: Optional[int] = None,
+    stealth_antibot: bool = False,
+    stealth_antibot_headful: bool = False,
+    stealth_new: bool = False,
+    stealth_premium: bool = False,
+    stealth_premium_headful: bool = False,
+    use_js_render: bool = False,
+    js_wait_for: str = "networkidle",
+    js_scroll: bool = False,
+    js_actions: Optional[list[dict[str, Any]]] = None,
+    solve_captcha: bool = False,
+    session_id: Optional[str] = None,
+    session_ttl: int = 1800,
+    formats: Optional[list[str]] = None,
+    only_main_content: bool = False,
+    extract_rules: Optional[dict[str, Any]] = None,
+    extract_schema: Optional[dict[str, Any]] = None,
+    extract_prompt: Optional[str] = None,
+    ai_content_mode: str = "full",
+) -> dict[str, Any]:
+    """The wire payload shared by the read tool and the write tool.
+
+    They differ by HTTP method and nothing else, so the request is built in one
+    place: two copies of thirty options are how the same endpoint ends up with two
+    dialects, one of which quietly lacks whatever was added last.
+    """
+    return {
+        "method": method,
+        "headers": headers,
+        "body": body,
+        "timeout": timeout,
+        "max_retries": max_retries,
+        "auto_retry": auto_retry,
+        "use_antibot": use_antibot,
+        "tls_profile": tls_profile,
+        "use_isp": use_isp,
+        "use_residential": use_residential,
+        "use_mobile": use_mobile,
+        "proxy_sticky": proxy_sticky,
+        "proxy_country": proxy_country,
+        "proxy_profile_id": proxy_profile_id,
+        "stealth_antibot": stealth_antibot,
+        "stealth_antibot_headful": stealth_antibot_headful,
+        "stealth_new": stealth_new,
+        "stealth_premium": stealth_premium,
+        "stealth_premium_headful": stealth_premium_headful,
+        "use_js_render": use_js_render,
+        "js_wait_for": js_wait_for,
+        "js_scroll": js_scroll,
+        "js_actions": js_actions,
+        "solve_captcha": solve_captcha,
+        "session_id": session_id,
+        "session_ttl": session_ttl,
+        "formats": formats or ["markdown"],
+        "only_main_content": only_main_content,
+        "extract_rules": extract_rules,
+        "extract_schema": extract_schema,
+        "extract_prompt": extract_prompt,
+        "ai_content_mode": ai_content_mode,
+    }
+
+
+async def _perform_scrape(
+    url: str,
+    args: dict[str, Any],
+    ctx: Context | None = None,
+) -> list[TextContent | ImageContent]:
+    """Run one request and format the outcome, safe or unsafe alike.
+
+    The failure text names the escalation step to try next, so it has to read the
+    stealth flags back out of the payload rather than be told them again.
+    """
+    try:
+        options = ScrapeOptions(**options_from_args(args))
+        result = await _client(ctx).scrape(url, options)
+        if not result.success:
+            return format_scrape_failure(
+                url,
+                result,
+                stealth_antibot=bool(args.get("stealth_antibot") or args.get("stealth_antibot_headful")),
+                stealth_premium=bool(args.get("stealth_premium")),
+                stealth_premium_headful=bool(args.get("stealth_premium_headful")),
+                use_isp=bool(args.get("use_isp")),
+                use_residential=bool(args.get("use_residential")),
+                use_mobile=bool(args.get("use_mobile")),
+            )
+        return format_scrape_success(url, result)
+    except FineDataAPIError as e:
+        return format_api_error(e)
+    except Exception as e:
+        return format_api_error(e)
 
 
 def create_mcp(*, http_mode: bool = False) -> FastMCP:
@@ -122,7 +292,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
             # client reads what to ask the authorization server for. Listing only
             # scrape:write made Cursor request exactly that, so job and usage tools
             # would have failed with 403 on a token the user had just approved. The
-            # eight tools need all three; per-path scope checks stay on the gateway.
+            # nine tools need all three; per-path scope checks stay on the gateway.
             required_scopes=["scrape:write", "jobs:read", "usage:read"],
             client_registration_options=ClientRegistrationOptions(
                 enabled=False,  # DCR lives on gateway AS
@@ -130,11 +300,15 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
                 default_scopes=["scrape:write", "jobs:read", "usage:read"],
             ),
         )
-        token_verifier = _PassThroughTokenVerifier(cfg.jwt_secret, cfg.jwt_algorithm)
+        token_verifier = _PassThroughTokenVerifier(
+            cfg.jwt_secret, cfg.jwt_algorithm, resource_url=cfg.resource_url
+        )
     elif http_mode:
         # HTTP without full OAuth metadata still accepts Bearer via custom middleware path:
         # FastMCP requires auth settings for protected resource; if missing, rely on env key.
-        token_verifier = _PassThroughTokenVerifier(cfg.jwt_secret, cfg.jwt_algorithm)
+        token_verifier = _PassThroughTokenVerifier(
+            cfg.jwt_secret, cfg.jwt_algorithm, resource_url=cfg.resource_url
+        )
 
     mcp = FastMCP(
         name="finedata",
@@ -168,24 +342,26 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
     @mcp.tool(
         title="Scrape URL",
         description=(
-            "Scrape one complete HTTP(S) URL with antibot bypass. Returns markdown by "
-            "default.\n\n"
+            "Read one URL and return its content, by default as markdown. Always a "
+            "GET request; the target is left unmodified.\n\n"
             'REQUIRED INPUT: call this tool with {"url":"https://..."}; put search '
             "terms in that URL's encoded query string. This is a URL fetcher, not a "
             'search tool: it does not accept an argument named "query" or a bare '
             "natural-language search phrase.\n\n"
-            + SERVER_INSTRUCTIONS
-            + "\n\nToken costs (estimates, use_antibot default +2 included): "
-            "base ~3; stealth_antibot +7; stealth_premium +20 (~23 total with DC); "
-            "stealth_premium+ISP ~25; stealth_premium_headful +30; ISP +2; "
-            "residential +3; mobile +4; captcha +10; AI extract +5. "
-            "js_actions +2 each."
+            "To send POST, PUT, PATCH or DELETE — submitting a form, calling a write "
+            "API — use send_http_request instead.\n\n"
+            "Stealth modes consume more tokens than a plain request. Exact rates "
+            "are in the documentation and via the get_usage tool."
         ),
         annotations=ToolAnnotations(
             title="Scrape URL",
-            readOnlyHint=False,  # bills tokens; method can be POST/PUT/DELETE
+            # Read-only now that the method is fixed at GET: the request leaves the
+            # target as it found it. Tokens are still spent, but that is our own
+            # meter — treating a paid read as a write would put this tool in the same
+            # class as cancel_job and make every page fetch ask for confirmation.
+            readOnlyHint=True,
             destructiveHint=False,
-            idempotentHint=False,
+            idempotentHint=True,
             openWorldHint=True,
         ),
     )
@@ -203,9 +379,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
                 examples=["https://example.com/"],
             ),
         ],
-        method: str = "GET",
         headers: Optional[dict[str, str]] = None,
-        body: Optional[str] = None,
         timeout: int = 120,
         max_retries: int = 5,
         auto_retry: bool = True,
@@ -237,68 +411,184 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
         ai_content_mode: str = "full",
         ctx: Context | None = None,
     ) -> list[TextContent | ImageContent]:
-        args = {
-            "method": method,
-            "headers": headers,
-            "body": body,
-            "timeout": timeout,
-            "max_retries": max_retries,
-            "auto_retry": auto_retry,
-            "use_antibot": use_antibot,
-            "tls_profile": tls_profile,
-            "use_isp": use_isp,
-            "use_residential": use_residential,
-            "use_mobile": use_mobile,
-            "proxy_sticky": proxy_sticky,
-            "proxy_country": proxy_country,
-            "proxy_profile_id": proxy_profile_id,
-            "stealth_antibot": stealth_antibot,
-            "stealth_antibot_headful": stealth_antibot_headful,
-            "stealth_new": stealth_new,
-            "stealth_premium": stealth_premium,
-            "stealth_premium_headful": stealth_premium_headful,
-            "use_js_render": use_js_render,
-            "js_wait_for": js_wait_for,
-            "js_scroll": js_scroll,
-            "js_actions": js_actions,
-            "solve_captcha": solve_captcha,
-            "session_id": session_id,
-            "session_ttl": session_ttl,
-            "formats": formats or ["markdown"],
-            "only_main_content": only_main_content,
-            "extract_rules": extract_rules,
-            "extract_schema": extract_schema,
-            "extract_prompt": extract_prompt,
-            "ai_content_mode": ai_content_mode,
-        }
-        try:
-            options = ScrapeOptions(**options_from_args(args))
-            result = await _client().scrape(url, options)
-            if not result.success:
-                return format_scrape_failure(
-                    url,
-                    result,
-                    stealth_antibot=stealth_antibot or stealth_antibot_headful,
-                    stealth_premium=stealth_premium,
-                    stealth_premium_headful=stealth_premium_headful,
-                    use_isp=use_isp,
-                    use_residential=use_residential,
-                    use_mobile=use_mobile,
+        return await _perform_scrape(
+            url,
+            _scrape_args(
+                headers=headers,
+                timeout=timeout,
+                max_retries=max_retries,
+                auto_retry=auto_retry,
+                use_antibot=use_antibot,
+                tls_profile=tls_profile,
+                use_isp=use_isp,
+                use_residential=use_residential,
+                use_mobile=use_mobile,
+                proxy_sticky=proxy_sticky,
+                proxy_country=proxy_country,
+                proxy_profile_id=proxy_profile_id,
+                stealth_antibot=stealth_antibot,
+                stealth_antibot_headful=stealth_antibot_headful,
+                stealth_new=stealth_new,
+                stealth_premium=stealth_premium,
+                stealth_premium_headful=stealth_premium_headful,
+                use_js_render=use_js_render,
+                js_wait_for=js_wait_for,
+                js_scroll=js_scroll,
+                js_actions=js_actions,
+                solve_captcha=solve_captcha,
+                session_id=session_id,
+                session_ttl=session_ttl,
+                formats=formats,
+                only_main_content=only_main_content,
+                extract_rules=extract_rules,
+                extract_schema=extract_schema,
+                extract_prompt=extract_prompt,
+                ai_content_mode=ai_content_mode,
+            ),
+            ctx,
+        )
+
+    @mcp.tool(
+        title="Send HTTP Request",
+        description=(
+            "Send a POST, PUT, PATCH or DELETE request through the same rendering "
+            "and proxy pipeline, and return the response as markdown by default. Use this "
+            "for submitting a form, calling a write API or deleting a resource.\n\n"
+            "This request may change something at the other end, which is why it is a "
+            "separate tool: to read a page, use scrape_url.\n\n"
+            'Send the payload as a string in "body" and set the matching '
+            '"headers", e.g. {"Content-Type": "application/json"}.\n\n'
+            "Stealth modes consume more tokens than a plain request. Exact rates "
+            "are in the documentation and via the get_usage tool."
+        ),
+        annotations=ToolAnnotations(
+            title="Send HTTP Request",
+            readOnlyHint=False,
+            # The target decides what a POST or a DELETE does, and we cannot know:
+            # claiming otherwise is what a client would rely on to skip asking.
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=True,
+        ),
+    )
+    async def send_http_request(
+        url: Annotated[
+            str,
+            Field(
+                description="REQUIRED absolute HTTP(S) URL to send the request to.",
+                pattern=r"^https?://",
+                examples=["https://api.example.com/items"],
+            ),
+        ],
+        method: Annotated[
+            str,
+            Field(
+                description=(
+                    "REQUIRED HTTP method: POST, PUT, PATCH or DELETE. "
+                    "GET belongs to scrape_url."
+                ),
+                examples=["POST"],
+            ),
+        ],
+        body: Optional[str] = None,
+        headers: Optional[dict[str, str]] = None,
+        timeout: int = 120,
+        max_retries: int = 5,
+        auto_retry: bool = True,
+        use_antibot: bool = True,
+        tls_profile: str = "chrome136",
+        use_isp: bool = False,
+        use_residential: bool = False,
+        use_mobile: bool = False,
+        proxy_sticky: bool = False,
+        proxy_country: Optional[str] = None,
+        proxy_profile_id: Optional[int] = None,
+        stealth_antibot: bool = False,
+        stealth_antibot_headful: bool = False,
+        stealth_new: bool = False,
+        stealth_premium: bool = False,
+        stealth_premium_headful: bool = False,
+        use_js_render: bool = False,
+        js_wait_for: str = "networkidle",
+        js_scroll: bool = False,
+        js_actions: Optional[list[dict[str, Any]]] = None,
+        solve_captcha: bool = False,
+        session_id: Optional[str] = None,
+        session_ttl: int = 1800,
+        formats: Optional[list[str]] = None,
+        only_main_content: bool = False,
+        extract_rules: Optional[dict[str, Any]] = None,
+        extract_schema: Optional[dict[str, Any]] = None,
+        extract_prompt: Optional[str] = None,
+        ai_content_mode: str = "full",
+        ctx: Context | None = None,
+    ) -> list[TextContent | ImageContent]:
+        requested = (method or "").strip().upper()
+        if requested not in UNSAFE_METHODS:
+            # Refused rather than passed through: accepting GET here would restore
+            # the very mix the split removed, and a tool marked destructive would be
+            # doing safe reads under a warning nobody can then trust.
+            return [
+                TextContent(
+                    type="text",
+                    text=(
+                        f"send_http_request accepts {', '.join(UNSAFE_METHODS)}. "
+                        f'Got "{method}". Use scrape_url to read a page with GET.'
+                    ),
                 )
-            return format_scrape_success(url, result)
-        except FineDataAPIError as e:
-            return format_api_error(e)
-        except Exception as e:
-            return format_api_error(e)
+            ]
+
+        return await _perform_scrape(
+            url,
+            _scrape_args(
+                method=requested,
+                body=body,
+                headers=headers,
+                timeout=timeout,
+                max_retries=max_retries,
+                auto_retry=auto_retry,
+                use_antibot=use_antibot,
+                tls_profile=tls_profile,
+                use_isp=use_isp,
+                use_residential=use_residential,
+                use_mobile=use_mobile,
+                proxy_sticky=proxy_sticky,
+                proxy_country=proxy_country,
+                proxy_profile_id=proxy_profile_id,
+                stealth_antibot=stealth_antibot,
+                stealth_antibot_headful=stealth_antibot_headful,
+                stealth_new=stealth_new,
+                stealth_premium=stealth_premium,
+                stealth_premium_headful=stealth_premium_headful,
+                use_js_render=use_js_render,
+                js_wait_for=js_wait_for,
+                js_scroll=js_scroll,
+                js_actions=js_actions,
+                solve_captcha=solve_captcha,
+                session_id=session_id,
+                session_ttl=session_ttl,
+                formats=formats,
+                only_main_content=only_main_content,
+                extract_rules=extract_rules,
+                extract_schema=extract_schema,
+                extract_prompt=extract_prompt,
+                ai_content_mode=ai_content_mode,
+            ),
+            ctx,
+        )
 
     @mcp.tool(
         title="Scrape Async",
         description=(
             "Submit an async scrape job (long-running / heavy stealth). "
-            "Defaults formats=['markdown']. Poll with get_job_status."
+            "Defaults formats=['markdown']. Poll with get_job_status. "
+            "Always a GET request: POST, PUT, PATCH and DELETE go through "
+            "send_http_request, which runs synchronously."
         ),
         annotations=ToolAnnotations(
             title="Scrape Async",
+            # Not read-only: it creates a job that then exists, can be polled and
+            # cancelled. The page it will read is left alone, hence not destructive.
             readOnlyHint=False,
             destructiveHint=False,
             idempotentHint=False,
@@ -307,9 +597,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
     )
     async def scrape_async(
         url: str,
-        method: str = "GET",
         headers: Optional[dict[str, str]] = None,
-        body: Optional[str] = None,
         timeout: int = 120,
         max_retries: int = 5,
         tls_profile: str = "chrome136",
@@ -347,7 +635,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
         args.pop("url")
         try:
             options = ScrapeOptions(**options_from_args(args, async_formats=True))
-            job = await _client().scrape_async(url, options, callback_url=callback_url)
+            job = await _client(ctx).scrape_async(url, options, callback_url=callback_url)
             text = (
                 f"Async job submitted.\n\n"
                 f"Job ID: {job.job_id}\nStatus: {job.status}\nURL: {job.url}\n"
@@ -364,13 +652,16 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
         annotations=ToolAnnotations(
             title="Get Job Status",
             readOnlyHint=True,
+            # Spelled out although the spec defaults it: both connector directories
+            # check for the field itself, and an absent hint reads as unknown.
+            destructiveHint=False,
             idempotentHint=True,
             openWorldHint=False,
         ),
     )
     async def get_job_status(job_id: str, ctx: Context | None = None) -> list[TextContent | ImageContent]:
         try:
-            job = await _client().get_job_status(job_id)
+            job = await _client(ctx).get_job_status(job_id)
             parts = [
                 f"Job ID: {job.job_id}",
                 f"Status: {job.status}",
@@ -403,7 +694,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
     )
     async def cancel_job(job_id: str, ctx: Context | None = None) -> list[TextContent]:
         try:
-            data = await _client().cancel_job(job_id)
+            data = await _client(ctx).cancel_job(job_id)
             return [TextContent(type="text", text=json.dumps(data, indent=2))]
         except Exception as e:
             return format_api_error(e)
@@ -414,6 +705,9 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
         annotations=ToolAnnotations(
             title="List Jobs",
             readOnlyHint=True,
+            # Spelled out although the spec defaults it: both connector directories
+            # check for the field itself, and an absent hint reads as unknown.
+            destructiveHint=False,
             idempotentHint=True,
             openWorldHint=False,
         ),
@@ -424,7 +718,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
         ctx: Context | None = None,
     ) -> list[TextContent]:
         try:
-            data = await _client().list_jobs(limit=limit, offset=offset)
+            data = await _client(ctx).list_jobs(limit=limit, offset=offset)
             return [
                 TextContent(
                     type="text",
@@ -494,11 +788,35 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
             # Convert to public API field names for batch payload
             base_public = ScrapeOptions(**base).to_dict()
 
+            # A per-URL object is free-form, so `{"url": ..., "method": "DELETE"}`
+            # used to reach the API through a tool whose schema never mentions a
+            # method — the mixed-method problem the split removed, in the one place
+            # a reviewer could not see it. Refused rather than quietly downgraded to
+            # GET: a caller who asked to delete a hundred URLs should hear about it.
+            unsafe = [
+                item.get("url")
+                for item in urls
+                if isinstance(item, dict)
+                and str(item.get("method") or "GET").strip().upper() != "GET"
+            ]
+            if unsafe:
+                return [
+                    TextContent(
+                        type="text",
+                        text=(
+                            "batch_scrape only reads with GET. "
+                            f"{len(unsafe)} entr{'y' if len(unsafe) == 1 else 'ies'} asked for "
+                            "another method; send those one at a time with send_http_request."
+                        ),
+                    )
+                ]
+
             requests: list[dict[str, Any]] = []
             for item in urls:
                 if isinstance(item, str):
                     requests.append({"url": item, **base_public})
                 elif isinstance(item, dict) and item.get("url"):
+                    item = {k: v for k, v in item.items() if k not in ("method", "body")}
                     overrides = options_from_args({**base, **item}, async_formats=True)
                     # item may already use public stealth_* names
                     pub = ScrapeOptions(**{k: overrides.get(k) for k in overrides}).to_dict()
@@ -533,7 +851,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
                         )
                     ]
 
-            result = await _client().batch_scrape(requests, callback_url=callback_url)
+            result = await _client(ctx).batch_scrape(requests, callback_url=callback_url)
             text = (
                 f"Batch submitted.\n\n"
                 f"Batch ID: {result.get('batch_id')}\n"
@@ -553,13 +871,16 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
         annotations=ToolAnnotations(
             title="Get Batch Status",
             readOnlyHint=True,
+            # Spelled out although the spec defaults it: both connector directories
+            # check for the field itself, and an absent hint reads as unknown.
+            destructiveHint=False,
             idempotentHint=True,
             openWorldHint=False,
         ),
     )
     async def get_batch_status(batch_id: str, ctx: Context | None = None) -> list[TextContent]:
         try:
-            data = await _client().get_batch_status(batch_id)
+            data = await _client(ctx).get_batch_status(batch_id)
             return [
                 TextContent(
                     type="text",
@@ -578,13 +899,16 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
         annotations=ToolAnnotations(
             title="Get Usage",
             readOnlyHint=True,
+            # Spelled out although the spec defaults it: both connector directories
+            # check for the field itself, and an absent hint reads as unknown.
+            destructiveHint=False,
             idempotentHint=True,
             openWorldHint=False,
         ),
     )
     async def get_usage(ctx: Context | None = None) -> list[TextContent]:
         try:
-            usage = await _client().get_usage()
+            usage = await _client(ctx).get_usage()
             customer_usage = usage.get("customer_usage", {}) if isinstance(usage, dict) else {}
             tokens_used = customer_usage.get("api_tokens_used")
             if tokens_used is None:

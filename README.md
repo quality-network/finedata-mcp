@@ -1,33 +1,28 @@
+<!-- mcp-name: io.github.quality-network/finedata-mcp -->
+
 # FineData MCP Server
 
 MCP (Model Context Protocol) server for [FineData](https://finedata.ai) web scraping API.
 
-Enables AI agents (Claude, Cursor, GPT, …) to scrape websites with:
+Enables AI agents (Claude, Cursor, GPT, …) to fetch pages that need a full
+browser and return clean data:
 
-- Antibot bypass (Cloudflare, DataDome, PerimeterX, Akamai, …)
 - JavaScript rendering and browser actions
 - Captcha solving
 - Datacenter / ISP / residential / mobile proxies
-- Markdown output by default (LLM-optimized)
+- Markdown or JSON output (markdown by default)
 - AI structured extraction
 - Local **stdio** or remote **Streamable HTTP** (+ OAuth 2.1)
 
-Version: **0.2.3**
+Version: **0.3.0**
 
-## Escalation ladder (recommended)
+## Modes
 
-Prefer the cheapest step that works. **Do not start with residential.**
-
-1. base (~3 tok with default TLS antibot)
-2. `stealth_antibot` + datacenter (~10)
-3. `stealth_premium` + `use_isp` (~25) — default for protected sites (60% on hard targets vs 13% on datacenter)
-4. `stealth_premium_headful` + `use_isp` (~34) — hardest challenges
-5. `use_residential` / `use_mobile` — geo and IP-sensitive sites only
-6. residential / mobile — geo / IP-sensitive only
-
-Gateway may apply a domain strategy that overrides engine/proxy; trust `tokens_used` in the response.
-
-See `docs/mcp-escalation-ladder-2026-07-29.md`.
+Start with a plain request. Stealth and proxy modes are available when a page
+needs a full browser; they consume more tokens than a plain request. Exact
+rates are in the documentation and via `get_usage`. Gateway may apply a domain
+strategy that overrides the requested engine or proxy; trust `tokens_used` in
+the response.
 
 ## Installation
 
@@ -105,8 +100,9 @@ OAuth 2.1 (Claude.ai / ChatGPT connectors): register via AS at `https://api.fine
 
 | Tool | Purpose |
 |------|---------|
-| `scrape_url` | Sync scrape (markdown default) |
-| `scrape_async` | Async job (`formats=['markdown']` default) |
+| `scrape_url` | Sync scrape with GET, read-only (markdown default) |
+| `send_http_request` | Sync POST / PUT / PATCH / DELETE through the same pipeline |
+| `scrape_async` | Async job, GET (`formats=['markdown']` default) |
 | `get_job_status` | Poll job (markdown, not raw HTML) |
 | `cancel_job` | Cancel job |
 | `list_jobs` | List jobs |
@@ -124,7 +120,10 @@ Async/batch: no `csv`/`xlsx` formats (sync only).
 finedata-mcp --transport http --host 0.0.0.0 --port 8080
 ```
 
-Health: `GET /health`. Protected resource metadata: `GET /.well-known/oauth-protected-resource`.
+Health: `GET /health`. Protected resource metadata is served at the path-scoped
+URL for the endpoint — `GET /.well-known/oauth-protected-resource/mcp` — because
+`FINEDATA_MCP_RESOURCE_URL` carries the `/mcp` path. Clients normally find it
+from the `WWW-Authenticate` header on a `401` rather than guessing.
 
 ## Support
 

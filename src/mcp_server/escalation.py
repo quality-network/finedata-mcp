@@ -1,6 +1,14 @@
-"""Canonical escalation ladder for agent tool instructions.
+"""Per-failure escalation hints for tool responses.
 
-Source of truth: docs/mcp-escalation-ladder-2026-07-29.md
+This module intentionally does not describe the escalation ladder in the
+server or tool *descriptions* — those are read on every list-tools call and
+must stay narrow (what a tool does, when to use it, what it returns), per the
+Claude Connectors Directory review requirements. The ladder knowledge instead
+surfaces exactly when it is actionable: `suggest_next_step` is called from
+`formatting.format_scrape_failure` and appended to the error text of a failed
+scrape, naming the next stealth/proxy combination to try.
+
+Source of truth for the underlying data: docs/mcp-escalation-ladder-2026-07-29.md
 (recalculated from scripts/benchmark_stealth_premium_proxy.json).
 """
 
@@ -10,36 +18,18 @@ from __future__ import annotations
 # Always trust tokens_used in the API response — gateway strategy registry
 # may override the engine and force residential/mobile for some domains.
 
-ESCALATION_LADDER = """
-Escalation ladder (cheapest → hardest). Prefer the lowest step that works
-(success rates from the 2026-07 benchmark, 15 hard targets):
+SERVER_INSTRUCTIONS = """
+FineData retrieves public or user-authorized web pages and returns AI-ready
+markdown or structured data.
 
-1. base — TLS antibot only (~3 tokens, 7% on hard targets). Simple static pages.
-2. stealth_antibot + datacenter (+7 → ~10 tokens, 27%). Cloudflare / DataDome class.
-3. stealth_premium + use_isp=true (~25 tokens, 60%). DEFAULT for protected sites.
-   Premium on datacenter IPs is much weaker (13%) — pair premium with ISP.
-4. stealth_premium_headful + use_isp=true (~34 tokens, 47%). Hardest challenges,
-   when step 3 returns a block or empty page.
-5. use_residential (+3, 33%) / use_mobile (+4) — geo targeting and IP-sensitive
-   sites ONLY, not a default.
+scrape_url reads one URL synchronously (GET only). send_http_request sends
+POST/PUT/PATCH/DELETE through the same pipeline, for form submissions or write
+APIs. scrape_async and batch_scrape submit longer-running jobs — one URL or up
+to 100 — polled with get_job_status, get_batch_status, list_jobs and
+cancel_job. get_usage reports token consumption for the current period.
 
-Do NOT start with residential. Escalate ISP before residential.
-Zillow/Nordstrom/Google/G2 class sites usually need step 3 (premium + ISP).
-
-IMPORTANT: FineData gateway may apply a domain strategy that overrides your
-requested engine/proxy. Quoted costs are estimates — use tokens_used from the response.
-""".strip()
-
-SERVER_INSTRUCTIONS = f"""
-FineData MCP — scrape any website for AI agents (markdown by default).
-
-{ESCALATION_LADDER}
-
-Tools: scrape_url (sync), scrape_async + get_job_status / cancel_job / list_jobs,
-batch_scrape + get_batch_status, get_usage.
-
-On 403 / challenge / block_reason failures, retry with the next ladder step.
-Prefer formats=['markdown']. Large pages are truncated (~60k chars) with a note.
+Every response reports tokens_used; a failed request is not billed. Formats
+default to markdown; large pages are truncated (~60k chars) with a note.
 """.strip()
 
 NEXT_STEP_HINTS = [

@@ -1,7 +1,8 @@
 {
   "name": "@finedata/mcp-server",
-  "version": "0.2.3",
-  "description": "MCP Server for FineData web scraping API - enables AI agents to scrape any website with antibot bypass",
+  "version": "0.3.0",
+  "mcpName": "io.github.quality-network/finedata-mcp",
+  "description": "MCP Server for FineData web scraping API — fetch pages that need a full browser and return markdown or JSON for AI agents",
   "keywords": [
     "mcp",
     "model-context-protocol",

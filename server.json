@@ -1,13 +1,19 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.quality-network/finedata-mcp",
-  "description": "FineData web scraping MCP — antibot bypass, JS render, markdown for AI agents",
-  "version": "0.2.3",
+  "title": "FineData",
+  "description": "FineData web scraping MCP — JavaScript rendering, captcha solving, markdown for AI agents",
+  "version": "0.3.0",
+  "websiteUrl": "https://finedata.ai/mcp/",
+  "repository": {
+    "url": "https://github.com/quality-network/finedata-mcp",
+    "source": "github"
+  },
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "finedata-mcp",
-      "version": "0.2.3",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       },
@@ -29,7 +35,7 @@
     {
       "registryType": "npm",
       "identifier": "@finedata/mcp-server",
-      "version": "0.2.3",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       },
@@ -50,8 +56,8 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "Bearer fd_… API key or OAuth access token",
-          "isRequired": true,
+          "description": "Bearer fd_… API key. Optional: an OAuth 2.1 client discovers the flow from the 401 challenge instead of being asked for a key up front.",
+          "isRequired": false,
           "isSecret": true
         }
       ]
