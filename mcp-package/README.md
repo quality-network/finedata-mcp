@@ -35,4 +35,4 @@ Prefer the Python package with `--transport http`, or point Cursor at:
 
 Full tool list: https://pypi.org/project/finedata-mcp/
 
-Version **0.3.0**
+Version **0.3.1**

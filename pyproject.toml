@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "finedata-mcp"
-version = "0.3.0"
+version = "0.3.1"
 description = "MCP Server for FineData web scraping API — fetch pages that need a full browser and return markdown or JSON for AI agents"
 readme = "README.md"
 license = "MIT"

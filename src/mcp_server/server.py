@@ -342,12 +342,14 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
     @mcp.tool(
         title="Scrape URL",
         description=(
-            "Read one URL and return its content, by default as markdown. Always a "
-            "GET request; the target is left unmodified.\n\n"
+            "Read one web page and return its content, by default as markdown: an "
+            "article, a product page, a listing, a catalog page, or a site's own "
+            "search-results URL. Always a GET request; the target is left unmodified.\n\n"
             'REQUIRED INPUT: call this tool with {"url":"https://..."}; put search '
-            "terms in that URL's encoded query string. This is a URL fetcher, not a "
-            'search tool: it does not accept an argument named "query" or a bare '
-            "natural-language search phrase.\n\n"
+            "terms in that URL's encoded query string (e.g. .../search?q=wireless%20headphones). "
+            'It does not accept an argument named "query" or a bare '
+            "natural-language search phrase — to look something up on a site, open "
+            "that site's search URL.\n\n"
             "To send POST, PUT, PATCH or DELETE — submitting a form, calling a write "
             "API — use send_http_request instead.\n\n"
             "Stealth modes consume more tokens than a plain request. Exact rates "
@@ -580,6 +582,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
     @mcp.tool(
         title="Scrape Async",
         description=(
+            "Read a web page like scrape_url, but as an async job — for a slow page or heavy stealth. "
             "Submit an async scrape job (long-running / heavy stealth). "
             "Defaults formats=['markdown']. Poll with get_job_status. "
             "Always a GET request: POST, PUT, PATCH and DELETE go through "
@@ -648,7 +651,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
 
     @mcp.tool(
         title="Get Job Status",
-        description="Poll async job status. On completed, returns markdown (not raw HTML).",
+        description="Poll one async job by the job_id returned from scrape_async or batch_scrape. Not for finding pages or products. On completed, returns markdown (not raw HTML).",
         annotations=ToolAnnotations(
             title="Get Job Status",
             readOnlyHint=True,
@@ -701,7 +704,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
 
     @mcp.tool(
         title="List Jobs",
-        description="List recent async jobs for the authenticated account.",
+        description="List this account's recent async scrape jobs (from scrape_async / batch_scrape). Not a history of synchronous scrape_url requests.",
         annotations=ToolAnnotations(
             title="List Jobs",
             readOnlyHint=True,
@@ -731,7 +734,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
     @mcp.tool(
         title="Batch Scrape",
         description=(
-            "Submit up to 100 URLs as a batch. `urls` may be a list of strings "
+            "Read up to 100 web pages in one batch (e.g. many product or listing URLs). `urls` may be a list of strings "
             "or objects {url, ...overrides}. Defaults formats=['markdown'] per item. "
             "Poll with get_batch_status."
         ),
@@ -893,7 +896,7 @@ def create_mcp(*, http_mode: bool = False) -> FastMCP:
     @mcp.tool(
         title="Get Usage",
         description=(
-            "Current period token usage (api_tokens_used). "
+            "Current period token usage (api_tokens_used). Not a request log. "
             "Does not include plan token limit — check the billing dashboard."
         ),
         annotations=ToolAnnotations(

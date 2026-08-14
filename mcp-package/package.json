@@ -1,6 +1,6 @@
 {
   "name": "@finedata/mcp-server",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "mcpName": "io.github.quality-network/finedata-mcp",
   "description": "MCP Server for FineData web scraping API — fetch pages that need a full browser and return markdown or JSON for AI agents",
   "keywords": [

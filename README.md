@@ -14,7 +14,7 @@ browser and return clean data:
 - AI structured extraction
 - Local **stdio** or remote **Streamable HTTP** (+ OAuth 2.1)
 
-Version: **0.3.0**
+Version: **0.3.1**
 
 ## Modes
 
